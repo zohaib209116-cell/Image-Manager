@@ -1,0 +1,149 @@
+Build a complete Restaurant Owner Dashboard 
+for a Pakistani restaurant reservation platform 
+called Dastarkhuwa.
+
+TECH STACK:
+- HTML, CSS, JavaScript (vanilla)
+- Firebase Firestore (database)
+- Firebase Authentication (login)
+- No frameworks needed, keep it simple
+
+FIREBASE CONFIG:
+- I will add my own Firebase config after
+
+PAGES TO BUILD:
+
+1. LOGIN PAGE
+- Email and password login
+- Only restaurant owners can access
+- Clean professional design
+- Logo: Dastarkhuwa
+- Dark theme preferred
+
+2. DASHBOARD HOME (after login)
+- Welcome message with restaurant name
+- Today's bookings count
+- Pending bookings count
+- Total bookings this month
+- Revenue this month (sum of booking amounts)
+- Quick action buttons
+
+3. BOOKINGS MANAGEMENT PAGE
+- Table showing all bookings for THIS restaurant
+- Each row shows:
+  * Customer name
+  * Phone number
+  * Date and time
+  * Number of people
+  * Special request
+  * Status (pending/confirmed/cancelled/completed)
+  * Action buttons
+- Action buttons for each booking:
+  * CONFIRM button (green) — changes status to confirmed
+  * REJECT button (red) — changes status to cancelled
+  * COMPLETE button (blue) — changes status to completed
+- Filter bookings by:
+  * Today
+  * This week
+  * This month
+  * By status
+- Search by customer name or phone
+- Real time updates from Firebase
+
+4. MENU MANAGEMENT PAGE
+- Add new menu item (name, price, category, description, image URL)
+- Edit existing menu items
+- Delete menu items
+- Categories: Starters, Main Course, Desserts, Drinks, Deals
+- Toggle item available/unavailable
+- Show all menu items in a grid layout
+
+5. TABLE MANAGEMENT PAGE
+- Add tables (table number, capacity, location: indoor/outdoor/rooftop)
+- Mark tables as available/occupied/reserved/maintenance
+- Visual table layout grid
+- Each table shows current status with color:
+  * Green = available
+  * Red = occupied
+  * Yellow = reserved
+  * Grey = maintenance
+
+6. RESTAURANT PROFILE PAGE
+- Edit restaurant info:
+  * Restaurant name
+  * City and area
+  * Cuisine type
+  * Price range
+  * Description
+  * Phone number
+  * Opening hours (each day separately)
+  * Profile image URL
+- Save changes to Firebase
+
+7. ANALYTICS PAGE
+- Bookings per day chart (last 7 days)
+- Most booked time slots
+- Most popular table sizes (2 people, 4 people etc)
+- Busiest days of week
+- Cancellation rate
+- Use Chart.js for charts
+
+8. NOTIFICATIONS PAGE
+- List of new booking requests
+- New booking shows as notification
+- Mark as read
+- Real time updates
+
+9. STAFF MANAGEMENT PAGE
+- Add staff members (name, role, phone)
+- Roles: Manager, Waiter, Chef, Cashier
+- Mark staff active/inactive
+- Simple list view
+
+10. SETTINGS PAGE
+- Change password
+- Update email
+- Notification preferences
+- Auto confirm bookings toggle
+- Booking time slot duration (30min, 1hr, 2hr)
+- Maximum bookings per slot
+
+DESIGN REQUIREMENTS:
+- Dark theme (dark background, light text)
+- Pakistani/Desi feel with modern design
+- Sidebar navigation on left
+- Top header with restaurant name and logout button
+- Mobile responsive
+- Use these colors:
+  * Primary: #E63946 (red)
+  * Secondary: #F4A261 (orange)
+  * Background: #1A1A2E (dark blue)
+  * Card background: #16213E
+  * Text: #EAEAEA
+
+FIREBASE STRUCTURE:
+Collections used:
+- restaurants/{restaurantId} — restaurant info
+- bookings — filtered by restaurantId field
+- menus/{restaurantId}/items — menu items
+- tables/{restaurantId}/slots — table info
+- staff/{restaurantId}/members — staff list
+- notifications/{restaurantId}/alerts — notifications
+
+IMPORTANT RULES:
+- Restaurant owner only sees THEIR OWN data
+- Filter all queries by restaurantId
+- restaurantId comes from Firebase Auth uid
+- Real time listeners using onSnapshot
+- Show loading spinner while data loads
+- Show success/error messages for all actions
+- Confirm before deleting anything
+- All times in Pakistan timezone (Asia/Karachi)
+
+AFTER LOGIN:
+- Check if user exists in restaurants collection
+- If yes, load their dashboard
+- If no, show error "Not authorized"
+
+Make it fully functional, connected to Firebase,
+professional looking and ready to use.

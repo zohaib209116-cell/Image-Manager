@@ -1,0 +1,161 @@
+import { useState, useEffect } from "react";
+import { useAuth } from "@/contexts/AuthContext";
+import { db } from "@/lib/firebase";
+import { doc, getDoc, updateDoc } from "firebase/firestore";
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Switch } from "@/components/ui/switch";
+import { useToast } from "@/hooks/use-toast";
+import { Loader2 } from "lucide-react";
+import { Skeleton } from "@/components/ui/skeleton";
+
+export default function Settings() {
+  const { restaurantId } = useAuth();
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const { toast } = useToast();
+
+  const [settings, setSettings] = useState({
+    autoConfirmBookings: false,
+    newBookingAlerts: true,
+    cancellationAlerts: true,
+    slotDuration: "60",
+    maxBookingsPerSlot: "10"
+  });
+
+  useEffect(() => {
+    const fetchSettings = async () => {
+      if (!restaurantId) return;
+      try {
+        const docRef = doc(db, "restaurants", restaurantId);
+        const docSnap = await getDoc(docRef);
+        if (docSnap.exists() && docSnap.data().settings) {
+          setSettings(docSnap.data().settings);
+        }
+      } catch (error) {
+        console.error(error);
+      } finally {
+        setLoading(false);
+      }
+    };
+    fetchSettings();
+  }, [restaurantId]);
+
+  const handleSave = async () => {
+    if (!restaurantId) return;
+    setSaving(true);
+    try {
+      await updateDoc(doc(db, "restaurants", restaurantId), {
+        settings,
+        updatedAt: new Date().toISOString()
+      });
+      toast({ title: "Settings Saved", description: "Your preferences have been updated." });
+    } catch (error) {
+      toast({ title: "Error", description: "Failed to save settings.", variant: "destructive" });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleChange = (key: string, value: any) => {
+    setSettings(prev => ({ ...prev, [key]: value }));
+  };
+
+  if (loading) {
+    return <div className="space-y-6"><Skeleton className="h-64 w-full max-w-2xl" /><Skeleton className="h-64 w-full max-w-2xl" /></div>;
+  }
+
+  return (
+    <div className="space-y-8 max-w-2xl">
+      <div>
+        <h2 className="text-3xl font-bold tracking-tight">Settings</h2>
+        <p className="text-muted-foreground mt-1">Manage your platform preferences and automation.</p>
+      </div>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Booking Configuration</CardTitle>
+          <CardDescription>Control how reservations are handled.</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-6">
+          <div className="flex items-center justify-between border-b border-border pb-4">
+            <div className="space-y-0.5">
+              <Label className="text-base">Auto-Confirm Bookings</Label>
+              <p className="text-sm text-muted-foreground">Automatically accept bookings without manual review.</p>
+            </div>
+            <Switch 
+              checked={settings.autoConfirmBookings} 
+              onCheckedChange={(c) => handleChange("autoConfirmBookings", c)} 
+            />
+          </div>
+          
+          <div className="grid grid-cols-2 gap-6">
+            <div className="space-y-2">
+              <Label>Slot Duration</Label>
+              <Select value={settings.slotDuration} onValueChange={(v) => handleChange("slotDuration", v)}>
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="30">30 Minutes</SelectItem>
+                  <SelectItem value="60">1 Hour</SelectItem>
+                  <SelectItem value="90">1.5 Hours</SelectItem>
+                  <SelectItem value="120">2 Hours</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="maxBookings">Max Bookings per Slot</Label>
+              <Input 
+                id="maxBookings" 
+                type="number" 
+                min="1" 
+                value={settings.maxBookingsPerSlot} 
+                onChange={(e) => handleChange("maxBookingsPerSlot", e.target.value)} 
+              />
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Notification Preferences</CardTitle>
+          <CardDescription>Choose what alerts you receive.</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-6">
+          <div className="flex items-center justify-between">
+            <div className="space-y-0.5">
+              <Label className="text-base">New Booking Alerts</Label>
+              <p className="text-sm text-muted-foreground">Get notified when a new request arrives.</p>
+            </div>
+            <Switch 
+              checked={settings.newBookingAlerts} 
+              onCheckedChange={(c) => handleChange("newBookingAlerts", c)} 
+            />
+          </div>
+          <div className="flex items-center justify-between">
+            <div className="space-y-0.5">
+              <Label className="text-base">Cancellation Alerts</Label>
+              <p className="text-sm text-muted-foreground">Get notified if a customer cancels.</p>
+            </div>
+            <Switch 
+              checked={settings.cancellationAlerts} 
+              onCheckedChange={(c) => handleChange("cancellationAlerts", c)} 
+            />
+          </div>
+        </CardContent>
+      </Card>
+
+      <div className="flex justify-end">
+        <Button onClick={handleSave} disabled={saving} size="lg">
+          {saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+          Save Preferences
+        </Button>
+      </div>
+    </div>
+  );
+}
