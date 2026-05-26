@@ -1,24 +1,26 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { Link, useLocation } from "wouter";
 import { useAuth } from "@/hooks/useAuth";
-import { 
-  LayoutDashboard, 
-  CalendarClock, 
-  MenuSquare, 
-  Grid2X2, 
-  Store, 
-  BarChart3, 
-  Bell, 
-  Users, 
-  Settings, 
+import {
+  LayoutDashboard,
+  CalendarClock,
+  MenuSquare,
+  Grid2X2,
+  Store,
+  BarChart3,
+  Bell,
+  Users,
+  Settings,
   LogOut,
   Menu,
-  X
+  X,
 } from "lucide-react";
 import { collection, query, where, onSnapshot } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
+import { useToast } from "@/hooks/use-toast";
+import { useBookingAlert } from "@/hooks/useBookingAlert";
 
 const NAV_ITEMS = [
   { href: "/", label: "Dashboard", icon: LayoutDashboard },
@@ -37,15 +39,42 @@ export function Layout({ children }: { children: React.ReactNode }) {
   const { logout, restaurantData, restaurantId } = useAuth();
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [unreadCount, setUnreadCount] = useState(0);
+  const [newBookingPulse, setNewBookingPulse] = useState(false);
+  const { toast } = useToast();
 
+  // Live unread notification count
   useEffect(() => {
     if (!restaurantId) return;
-    const q = query(collection(db, `notifications/${restaurantId}/alerts`), where("read", "==", false));
+    const q = query(
+      collection(db, `notifications/${restaurantId}/alerts`),
+      where("read", "==", false)
+    );
     const unsubscribe = onSnapshot(q, (snap) => {
       setUnreadCount(snap.docs.length);
     });
     return () => unsubscribe();
   }, [restaurantId]);
+
+  // Live booking alert — sound + toast on every new booking
+  const handleNewBooking = useCallback((booking: any) => {
+    const name = booking.customerName || booking.name || "A customer";
+    const people = booking.partySize || booking.numberOfPeople || "";
+    const description = people
+      ? `${name} — party of ${people}`
+      : name;
+
+    toast({
+      title: "New Booking Request",
+      description,
+      duration: 6000,
+    });
+
+    // Pulse the bell icon briefly
+    setNewBookingPulse(true);
+    setTimeout(() => setNewBookingPulse(false), 3000);
+  }, [toast]);
+
+  useBookingAlert({ restaurantId, onNewBooking: handleNewBooking });
 
   const handleLogout = async () => {
     await logout();
@@ -92,6 +121,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
             {NAV_ITEMS.map((item) => {
               const Icon = item.icon;
               const isActive = location === item.href;
+              const isNotif = item.label === "Notifications";
               return (
                 <li key={item.href}>
                   <Link
@@ -103,12 +133,21 @@ export function Layout({ children }: { children: React.ReactNode }) {
                         ? "bg-sidebar-accent text-sidebar-accent-foreground"
                         : "text-sidebar-foreground/70 hover:bg-sidebar-accent/50 hover:text-sidebar-foreground"
                     )}
+                    data-testid={`nav-${item.label.toLowerCase()}`}
                   >
-                    <Icon className="h-5 w-5" />
+                    <span className="relative">
+                      <Icon className="h-5 w-5" />
+                      {isNotif && newBookingPulse && (
+                        <span className="absolute -right-1 -top-1 flex h-2 w-2">
+                          <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-primary opacity-75" />
+                          <span className="relative inline-flex rounded-full h-2 w-2 bg-primary" />
+                        </span>
+                      )}
+                    </span>
                     {item.label}
-                    {item.label === "Notifications" && unreadCount > 0 && (
-                      <span className="ml-auto rounded-full bg-primary px-2 py-0.5 text-xs font-medium text-primary-foreground">
-                        {unreadCount}
+                    {isNotif && unreadCount > 0 && (
+                      <span className="ml-auto rounded-full bg-primary px-2 py-0.5 text-xs font-bold text-primary-foreground">
+                        {unreadCount > 99 ? "99+" : unreadCount}
                       </span>
                     )}
                   </Link>
@@ -123,6 +162,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
             variant="ghost"
             className="w-full justify-start gap-3 text-sidebar-foreground/70 hover:bg-destructive/20 hover:text-destructive"
             onClick={handleLogout}
+            data-testid="button-logout"
           >
             <LogOut className="h-5 w-5" />
             Sign out

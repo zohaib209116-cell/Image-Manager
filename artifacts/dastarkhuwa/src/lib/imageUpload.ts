@@ -1,10 +1,9 @@
-export const RENDER_BASE_URL = ""; // Fill with your render backend URL
+export const RENDER_BASE_URL = "https://server-1py2.onrender.com";
 
 export async function uploadRestaurantImage(file: File, token: string): Promise<{ imageUrl: string; publicId: string }> {
-  if (!RENDER_BASE_URL) throw new Error("Render backend URL not configured.");
   const formData = new FormData();
   formData.append("image", file);
-  
+
   const res = await fetch(`${RENDER_BASE_URL}/storage/upload/restaurant`, {
     method: "POST",
     headers: { Authorization: `Bearer ${token}` },
@@ -15,7 +14,6 @@ export async function uploadRestaurantImage(file: File, token: string): Promise<
 }
 
 export async function uploadMenuImage(file: File, token: string): Promise<{ imageUrl: string; publicId: string }> {
-  if (!RENDER_BASE_URL) throw new Error("Render backend URL not configured.");
   const formData = new FormData();
   formData.append("image", file);
 
@@ -29,7 +27,6 @@ export async function uploadMenuImage(file: File, token: string): Promise<{ imag
 }
 
 export async function uploadMultipleImages(files: File[], token: string): Promise<{ imageUrl: string; publicId: string }[]> {
-  if (!RENDER_BASE_URL) throw new Error("Render backend URL not configured.");
   const formData = new FormData();
   files.forEach(file => formData.append("image", file));
 

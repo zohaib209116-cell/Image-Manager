@@ -5,7 +5,7 @@ import { collection, query, onSnapshot, doc, updateDoc, writeBatch } from "fireb
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { formatKarachiTime } from "@/lib/utils";
-import { Bell, Check, CheckAll } from "lucide-react";
+import { Bell, Check, CheckCheck } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 
@@ -20,7 +20,7 @@ export default function Notifications() {
     const q = query(collection(db, `notifications/${restaurantId}/alerts`));
 
     const unsubscribe = onSnapshot(q, (snapshot) => {
-      const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      const data = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
       setNotifications(data.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()));
       setLoading(false);
     });
@@ -50,7 +50,7 @@ export default function Notifications() {
   };
 
   if (loading) {
-    return <div className="space-y-4">{[1,2,3,4].map(i => <Skeleton key={i} className="h-20 w-full" />)}</div>;
+    return <div className="space-y-4">{[1, 2, 3, 4].map(i => <Skeleton key={i} className="h-20 w-full" />)}</div>;
   }
 
   const unreadCount = notifications.filter(n => !n.read).length;
@@ -60,11 +60,14 @@ export default function Notifications() {
       <div className="flex justify-between items-center">
         <div>
           <h2 className="text-3xl font-bold tracking-tight">Notifications</h2>
-          <p className="text-muted-foreground mt-1">You have {unreadCount} unread alerts.</p>
+          <p className="text-muted-foreground mt-1">
+            {unreadCount > 0 ? `You have ${unreadCount} unread alert${unreadCount > 1 ? "s" : ""}.` : "All caught up."}
+          </p>
         </div>
         {unreadCount > 0 && (
           <Button variant="outline" onClick={markAllAsRead} className="gap-2">
-             Mark all as read
+            <CheckCheck className="h-4 w-4" />
+            Mark all as read
           </Button>
         )}
       </div>
@@ -77,12 +80,31 @@ export default function Notifications() {
           </div>
         ) : (
           notifications.map(notif => (
-            <Card key={notif.id} className={cn("transition-colors", !notif.read ? "border-primary bg-primary/5" : "bg-card/50")}>
+            <Card
+              key={notif.id}
+              data-testid={`notification-card-${notif.id}`}
+              className={cn(
+                "transition-all duration-200",
+                !notif.read
+                  ? "border-primary bg-primary/5 shadow-sm shadow-primary/10"
+                  : "bg-card/50 border-border"
+              )}
+            >
               <CardContent className="p-4 flex items-start gap-4">
-                <div className={cn("mt-1 p-2 rounded-full", !notif.read ? "bg-primary/20 text-primary" : "bg-muted text-muted-foreground")}>
-                  <Bell className="h-4 w-4" />
+                <div className={cn(
+                  "mt-1 p-2 rounded-full shrink-0",
+                  !notif.read ? "bg-primary/20 text-primary" : "bg-muted text-muted-foreground"
+                )}>
+                  {!notif.read ? (
+                    <span className="relative flex h-4 w-4 items-center justify-center">
+                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-primary opacity-30" />
+                      <Bell className="h-4 w-4 relative" />
+                    </span>
+                  ) : (
+                    <Bell className="h-4 w-4" />
+                  )}
                 </div>
-                <div className="flex-1">
+                <div className="flex-1 min-w-0">
                   <p className={cn("text-sm", !notif.read ? "font-semibold text-foreground" : "text-muted-foreground")}>
                     {notif.message}
                   </p>
@@ -91,7 +113,13 @@ export default function Notifications() {
                   </p>
                 </div>
                 {!notif.read && (
-                  <Button variant="ghost" size="icon" onClick={() => markAsRead(notif.id)} className="shrink-0 h-8 w-8 text-muted-foreground hover:text-primary">
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    onClick={() => markAsRead(notif.id)}
+                    className="shrink-0 h-8 w-8 text-muted-foreground hover:text-primary"
+                    data-testid={`mark-read-${notif.id}`}
+                  >
                     <Check className="h-4 w-4" />
                   </Button>
                 )}
