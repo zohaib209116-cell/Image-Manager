@@ -3,7 +3,7 @@ import { getAuth } from "firebase/auth";
 import { getFirestore } from "firebase/firestore";
 
 const firebaseConfig = {
-  apiKey: "DASTERKHUWA",
+  apiKey: "AIzaSyBdSnwi5inR0SimAZpXz3w2sBmIle4vO9U",
   authDomain: "restaurant-reservation-s-4f34f.firebaseapp.com",
   projectId: "restaurant-reservation-s-4f34f",
   storageBucket: "restaurant-reservation-s-4f34f.firebasestorage.app",

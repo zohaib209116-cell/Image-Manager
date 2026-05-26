@@ -1,6 +1,8 @@
 import { useState } from "react";
 import { useLocation } from "wouter";
-import { useAuth } from "@/hooks/useAuth";
+import { signInWithEmailAndPassword } from "firebase/auth";
+import { doc, getDoc } from "firebase/firestore";
+import { auth, db } from "@/lib/firebase";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -11,7 +13,6 @@ export default function Login() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
-  const { login } = useAuth();
   const [, setLocation] = useLocation();
   const { toast } = useToast();
 
@@ -19,13 +20,23 @@ export default function Login() {
     e.preventDefault();
     setLoading(true);
     try {
-      await login(email, password);
+      const credential = await signInWithEmailAndPassword(auth, email, password);
+      const docSnap = await getDoc(doc(db, "restaurants", credential.user.uid));
+      if (!docSnap.exists()) {
+        await auth.signOut();
+        toast({
+          title: "Access Denied",
+          description: "No restaurant profile found for this account.",
+          variant: "destructive",
+        });
+        return;
+      }
       setLocation("/");
     } catch (error: any) {
       toast({
         title: "Login Failed",
-        description: error.message || "Invalid credentials",
-        variant: "destructive"
+        description: error.message || "Invalid email or password.",
+        variant: "destructive",
       });
     } finally {
       setLoading(false);
@@ -48,6 +59,7 @@ export default function Login() {
             <Label htmlFor="email">Email</Label>
             <Input
               id="email"
+              data-testid="input-email"
               type="email"
               placeholder="owner@restaurant.com"
               value={email}
@@ -60,14 +72,21 @@ export default function Login() {
             <Label htmlFor="password">Password</Label>
             <Input
               id="password"
+              data-testid="input-password"
               type="password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               required
               className="bg-input border-border"
+              autoComplete="current-password"
             />
           </div>
-          <Button type="submit" className="w-full" disabled={loading}>
+          <Button
+            type="submit"
+            className="w-full"
+            disabled={loading}
+            data-testid="button-signin"
+          >
             {loading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : "Sign In"}
           </Button>
         </form>

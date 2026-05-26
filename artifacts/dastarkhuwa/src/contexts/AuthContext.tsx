@@ -1,27 +1,12 @@
-import { createContext, useEffect, useState, ReactNode } from "react";
-import { User, signInWithEmailAndPassword, signOut as firebaseSignOut, onAuthStateChanged } from "firebase/auth";
+import { useEffect, useState, ReactNode } from "react";
+import { signInWithEmailAndPassword, signOut as firebaseSignOut, onAuthStateChanged } from "firebase/auth";
 import { doc, getDoc } from "firebase/firestore";
-import { auth, db } from "../lib/firebase";
+import { auth, db } from "@/lib/firebase";
 import { useToast } from "@/hooks/use-toast";
-
-interface RestaurantData {
-  name?: string;
-  [key: string]: any;
-}
-
-export interface AuthContextType {
-  user: User | null;
-  restaurantId: string | null;
-  restaurantData: RestaurantData | null;
-  loading: boolean;
-  login: (email: string, password: string) => Promise<void>;
-  logout: () => Promise<void>;
-}
-
-export const AuthContext = createContext<AuthContextType | undefined>(undefined);
+import { AuthContext, type RestaurantData } from "@/contexts/authContextDef";
 
 export function AuthProvider({ children }: { children: ReactNode }) {
-  const [user, setUser] = useState<User | null>(null);
+  const [user, setUser] = useState<import("firebase/auth").User | null>(null);
   const [restaurantId, setRestaurantId] = useState<string | null>(null);
   const [restaurantData, setRestaurantData] = useState<RestaurantData | null>(null);
   const [loading, setLoading] = useState(true);
