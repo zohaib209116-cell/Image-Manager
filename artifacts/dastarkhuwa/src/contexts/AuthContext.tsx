@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useState, ReactNode } from "react";
+import { createContext, useEffect, useState, ReactNode } from "react";
 import { User, signInWithEmailAndPassword, signOut as firebaseSignOut, onAuthStateChanged } from "firebase/auth";
 import { doc, getDoc } from "firebase/firestore";
 import { auth, db } from "../lib/firebase";
@@ -9,7 +9,7 @@ interface RestaurantData {
   [key: string]: any;
 }
 
-interface AuthContextType {
+export interface AuthContextType {
   user: User | null;
   restaurantId: string | null;
   restaurantData: RestaurantData | null;
@@ -18,7 +18,7 @@ interface AuthContextType {
   logout: () => Promise<void>;
 }
 
-const AuthContext = createContext<AuthContextType | undefined>(undefined);
+export const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
@@ -34,17 +34,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         try {
           const docRef = doc(db, "restaurants", currentUser.uid);
           const docSnap = await getDoc(docRef);
-          
+
           if (docSnap.exists()) {
             setUser(currentUser);
             setRestaurantId(currentUser.uid);
             setRestaurantData(docSnap.data() as RestaurantData);
           } else {
-            // Not authorized
             toast({
               title: "Access Denied",
               description: "No restaurant profile found for this account.",
-              variant: "destructive"
+              variant: "destructive",
             });
             await firebaseSignOut(auth);
             setUser(null);
@@ -78,12 +77,4 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       {children}
     </AuthContext.Provider>
   );
-}
-
-export function useAuth() {
-  const context = useContext(AuthContext);
-  if (context === undefined) {
-    throw new Error("useAuth must be used within an AuthProvider");
-  }
-  return context;
 }
