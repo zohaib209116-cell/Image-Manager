@@ -1,7 +1,8 @@
 import { useState, useEffect } from "react";
 import { useAuth } from "@/hooks/useAuth";
 import { db } from "@/lib/firebase";
-import { doc, getDoc, updateDoc } from "firebase/firestore";
+import { doc, getDoc, updateDoc, serverTimestamp } from "firebase/firestore";
+import { sanitizeNum, safeErrorMessage } from "@/lib/security";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -11,6 +12,8 @@ import { Switch } from "@/components/ui/switch";
 import { useToast } from "@/hooks/use-toast";
 import { Loader2 } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
+
+const VALID_SLOT_DURATIONS = ["30", "60", "90", "120"] as const;
 
 export default function Settings() {
   const { restaurantId } = useAuth();
@@ -30,13 +33,12 @@ export default function Settings() {
     const fetchSettings = async () => {
       if (!restaurantId) return;
       try {
-        const docRef = doc(db, "restaurants", restaurantId);
-        const docSnap = await getDoc(docRef);
+        const docSnap = await getDoc(doc(db, "restaurants", restaurantId));
         if (docSnap.exists() && docSnap.data().settings) {
           setSettings(docSnap.data().settings);
         }
       } catch (error) {
-        console.error(error);
+        // Silent — defaults remain
       } finally {
         setLoading(false);
       }
@@ -45,16 +47,31 @@ export default function Settings() {
   }, [restaurantId]);
 
   const handleSave = async () => {
-    if (!restaurantId) return;
+    if (!restaurantId || saving) return;
+
+    // Validate before write
+    const slotDuration = VALID_SLOT_DURATIONS.includes(settings.slotDuration as any) ? settings.slotDuration : "60";
+    const maxPerSlot = sanitizeNum(settings.maxBookingsPerSlot, 1, 100);
+    if (maxPerSlot === null) {
+      toast({ title: "Validation Error", description: "Max bookings per slot must be between 1 and 100.", variant: "destructive" });
+      return;
+    }
+
     setSaving(true);
     try {
       await updateDoc(doc(db, "restaurants", restaurantId), {
-        settings,
-        updatedAt: new Date().toISOString()
+        settings: {
+          autoConfirmBookings: Boolean(settings.autoConfirmBookings),
+          newBookingAlerts: Boolean(settings.newBookingAlerts),
+          cancellationAlerts: Boolean(settings.cancellationAlerts),
+          slotDuration,
+          maxBookingsPerSlot: String(maxPerSlot),
+        },
+        updatedAt: serverTimestamp(),
       });
       toast({ title: "Settings Saved", description: "Your preferences have been updated." });
     } catch (error) {
-      toast({ title: "Error", description: "Failed to save settings.", variant: "destructive" });
+      toast({ title: "Error", description: safeErrorMessage(error), variant: "destructive" });
     } finally {
       setSaving(false);
     }
@@ -86,19 +103,17 @@ export default function Settings() {
               <Label className="text-base">Auto-Confirm Bookings</Label>
               <p className="text-sm text-muted-foreground">Automatically accept bookings without manual review.</p>
             </div>
-            <Switch 
-              checked={settings.autoConfirmBookings} 
-              onCheckedChange={(c) => handleChange("autoConfirmBookings", c)} 
+            <Switch
+              checked={settings.autoConfirmBookings}
+              onCheckedChange={(c) => handleChange("autoConfirmBookings", c)}
             />
           </div>
-          
+
           <div className="grid grid-cols-2 gap-6">
             <div className="space-y-2">
               <Label>Slot Duration</Label>
               <Select value={settings.slotDuration} onValueChange={(v) => handleChange("slotDuration", v)}>
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
+                <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="30">30 Minutes</SelectItem>
                   <SelectItem value="60">1 Hour</SelectItem>
@@ -109,12 +124,13 @@ export default function Settings() {
             </div>
             <div className="space-y-2">
               <Label htmlFor="maxBookings">Max Bookings per Slot</Label>
-              <Input 
-                id="maxBookings" 
-                type="number" 
-                min="1" 
-                value={settings.maxBookingsPerSlot} 
-                onChange={(e) => handleChange("maxBookingsPerSlot", e.target.value)} 
+              <Input
+                id="maxBookings"
+                type="number"
+                min="1"
+                max="100"
+                value={settings.maxBookingsPerSlot}
+                onChange={(e) => handleChange("maxBookingsPerSlot", e.target.value)}
               />
             </div>
           </div>
@@ -132,9 +148,9 @@ export default function Settings() {
               <Label className="text-base">New Booking Alerts</Label>
               <p className="text-sm text-muted-foreground">Get notified when a new request arrives.</p>
             </div>
-            <Switch 
-              checked={settings.newBookingAlerts} 
-              onCheckedChange={(c) => handleChange("newBookingAlerts", c)} 
+            <Switch
+              checked={settings.newBookingAlerts}
+              onCheckedChange={(c) => handleChange("newBookingAlerts", c)}
             />
           </div>
           <div className="flex items-center justify-between">
@@ -142,9 +158,9 @@ export default function Settings() {
               <Label className="text-base">Cancellation Alerts</Label>
               <p className="text-sm text-muted-foreground">Get notified if a customer cancels.</p>
             </div>
-            <Switch 
-              checked={settings.cancellationAlerts} 
-              onCheckedChange={(c) => handleChange("cancellationAlerts", c)} 
+            <Switch
+              checked={settings.cancellationAlerts}
+              onCheckedChange={(c) => handleChange("cancellationAlerts", c)}
             />
           </div>
         </CardContent>

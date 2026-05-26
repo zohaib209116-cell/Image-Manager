@@ -2,15 +2,17 @@ import { useState, useEffect } from "react";
 import { Link } from "wouter";
 import { useAuth } from "@/hooks/useAuth";
 import { db } from "@/lib/firebase";
-import { collection, query, where, onSnapshot } from "firebase/firestore";
+import { collection, query, where, onSnapshot, limit } from "firebase/firestore";
 import { formatPKR, formatKarachiTime } from "@/lib/utils";
+import { isPermissionDenied } from "@/lib/security";
+import { secureLogout } from "@/lib/auth";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { 
-  Users, 
-  CalendarClock, 
-  TrendingUp, 
+import {
+  Users,
+  CalendarClock,
+  TrendingUp,
   Clock,
   Plus,
   ArrowRight,
@@ -29,14 +31,23 @@ export default function Dashboard() {
 
     const q = query(
       collection(db, "bookings"),
-      where("restaurantId", "==", restaurantId)
+      where("restaurantId", "==", restaurantId),
+      where("isDeleted", "==", false),
+      limit(200)
     );
 
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-      setBookings(data);
-      setLoading(false);
-    });
+    const unsubscribe = onSnapshot(
+      q,
+      (snapshot) => {
+        const data = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
+        setBookings(data);
+        setLoading(false);
+      },
+      async (error) => {
+        console.error("[Dashboard] listener error:", error);
+        if (isPermissionDenied(error)) await secureLogout();
+      }
+    );
 
     return () => unsubscribe();
   }, [restaurantId]);
@@ -49,13 +60,17 @@ export default function Dashboard() {
     return bDate >= today && bDate < new Date(today.getTime() + 86400000);
   });
 
-  const pendingBookings = bookings.filter(b => b.status === 'pending');
+  const pendingBookings = bookings.filter(b => b.status === "pending");
   const monthlyBookings = bookings.filter(b => {
     const bDate = new Date(b.date);
     return bDate.getMonth() === today.getMonth() && bDate.getFullYear() === today.getFullYear();
   });
-  const monthlyRevenue = monthlyBookings.filter(b => b.status === 'completed').reduce((acc, curr) => acc + (curr.totalAmount || 0), 0);
-  const recentBookings = [...bookings].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()).slice(0, 5);
+  const monthlyRevenue = monthlyBookings
+    .filter(b => b.status === "completed")
+    .reduce((acc, curr) => acc + (curr.totalAmount || 0), 0);
+  const recentBookings = [...bookings]
+    .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+    .slice(0, 5);
 
   if (loading) {
     return (
@@ -151,14 +166,14 @@ export default function Dashboard() {
                     <p className="text-sm text-muted-foreground">{formatKarachiTime(booking.date)} · {booking.partySize} people</p>
                   </div>
                   <Badge variant={
-                    booking.status === 'confirmed' ? 'default' : 
-                    booking.status === 'pending' ? 'secondary' : 
-                    booking.status === 'cancelled' ? 'destructive' : 'outline'
+                    booking.status === "confirmed" ? "default" :
+                    booking.status === "pending" ? "secondary" :
+                    booking.status === "cancelled" ? "destructive" : "outline"
                   } className={
-                    booking.status === 'confirmed' ? 'bg-green-500 hover:bg-green-600' :
-                    booking.status === 'completed' ? 'bg-blue-500 hover:bg-blue-600' : ''
+                    booking.status === "confirmed" ? "bg-green-500 hover:bg-green-600" :
+                    booking.status === "completed" ? "bg-blue-500 hover:bg-blue-600" : ""
                   }>
-                    {booking.status.charAt(0).toUpperCase() + booking.status.slice(1)}
+                    {booking.status?.charAt(0).toUpperCase() + booking.status?.slice(1)}
                   </Badge>
                 </div>
               ))

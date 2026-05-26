@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { Link, useLocation } from "wouter";
 import { useAuth } from "@/hooks/useAuth";
 import {
@@ -17,6 +17,7 @@ import {
 } from "lucide-react";
 import { collection, query, where, onSnapshot } from "firebase/firestore";
 import { db } from "@/lib/firebase";
+import { secureLogout } from "@/lib/auth";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
@@ -34,6 +35,8 @@ const NAV_ITEMS = [
   { href: "/settings", label: "Settings", icon: Settings },
 ];
 
+const INACTIVITY_TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes
+
 export function Layout({ children }: { children: React.ReactNode }) {
   const [location] = useLocation();
   const { logout, restaurantData, restaurantId } = useAuth();
@@ -41,35 +44,51 @@ export function Layout({ children }: { children: React.ReactNode }) {
   const [unreadCount, setUnreadCount] = useState(0);
   const [newBookingPulse, setNewBookingPulse] = useState(false);
   const { toast } = useToast();
+  const inactivityTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Live unread notification count
+  // ── Auto-logout on 30 min inactivity ────────────────────────────────────────
+  const resetInactivityTimer = useCallback(() => {
+    if (inactivityTimer.current) clearTimeout(inactivityTimer.current);
+    inactivityTimer.current = setTimeout(async () => {
+      toast({ title: "Session Expired", description: "You have been signed out due to inactivity." });
+      await logout();
+    }, INACTIVITY_TIMEOUT_MS);
+  }, [logout, toast]);
+
+  useEffect(() => {
+    const events = ["mousemove", "keydown", "click", "scroll", "touchstart"];
+    events.forEach(e => window.addEventListener(e, resetInactivityTimer, { passive: true }));
+    resetInactivityTimer();
+    return () => {
+      events.forEach(e => window.removeEventListener(e, resetInactivityTimer));
+      if (inactivityTimer.current) clearTimeout(inactivityTimer.current);
+    };
+  }, [resetInactivityTimer]);
+
+  // ── Live unread notification count ──────────────────────────────────────────
   useEffect(() => {
     if (!restaurantId) return;
     const q = query(
       collection(db, `notifications/${restaurantId}/alerts`),
       where("read", "==", false)
     );
-    const unsubscribe = onSnapshot(q, (snap) => {
-      setUnreadCount(snap.docs.length);
-    });
+    const unsubscribe = onSnapshot(
+      q,
+      (snap) => setUnreadCount(snap.docs.length),
+      (err) => console.error("[Notifications] listener error:", err)
+    );
     return () => unsubscribe();
   }, [restaurantId]);
 
-  // Live booking alert — sound + toast on every new booking
+  // ── Live booking alert — sound + toast ──────────────────────────────────────
   const handleNewBooking = useCallback((booking: any) => {
     const name = booking.customerName || booking.name || "A customer";
     const people = booking.partySize || booking.numberOfPeople || "";
-    const description = people
-      ? `${name} — party of ${people}`
-      : name;
-
     toast({
       title: "New Booking Request",
-      description,
+      description: people ? `${name} — party of ${people}` : name,
       duration: 6000,
     });
-
-    // Pulse the bell icon briefly
     setNewBookingPulse(true);
     setTimeout(() => setNewBookingPulse(false), 3000);
   }, [toast]);
@@ -77,6 +96,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
   useBookingAlert({ restaurantId, onNewBooking: handleNewBooking });
 
   const handleLogout = async () => {
+    if (inactivityTimer.current) clearTimeout(inactivityTimer.current);
     await logout();
   };
 

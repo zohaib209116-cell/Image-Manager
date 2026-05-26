@@ -1,0 +1,311 @@
+Fix all Firebase permission errors and security vulnerabilities in the existing restaurant dashboard WITHOUT changing the UI, layouts, styling, animations, routes, or component structure.
+
+Apply ONLY security hardening and permission fixes.
+
+The frontend code MUST fully match the Firestore security rules below to avoid permission-denied errors during testing.
+
+==================================================
+FIREBASE CONFIG
+
+const firebaseConfig = {
+apiKey: "AIzaSyBdSnwi5inR0SimAZpXz3w2sBmIle4vO9U",
+authDomain: "restaurant-reservation-s-4f34f.firebaseapp.com",
+projectId: "restaurant-reservation-s-4f34f",
+storageBucket: "restaurant-reservation-s-4f34f.firebasestorage.app",
+messagingSenderId: "776012870152",
+appId: "1:776012870152:web:f39a33e800d9df7a6157bd"
+};
+
+==================================================
+BACKEND URL
+
+https://server-1py2.onrender.com
+
+==================================================
+CRITICAL SECURITY REQUIREMENTS
+
+1. NEVER hardcode:
+
+- restaurantId
+- ownerId
+- user UID
+- admin IDs
+- document IDs
+
+Fetch dynamically after login.
+
+==================================================
+
+2. Use Firebase Auth state listener:
+
+onAuthStateChanged(auth, async (user) => {
+if (!user) {
+cleanupSession();
+return showLoginPage();
+}
+
+try {
+const q = query(
+collection(db, "restaurants"),
+where("ownerId", "==", user.uid),
+limit(1)
+);
+
+const snap = await getDocs(q);
+
+if (snap.empty) {
+  await secureLogout();
+  return showError("Restaurant profile not found.");
+}
+
+const restaurantDoc = snap.docs[0];
+
+initDashboard({
+  currentUser: user,
+  restaurantId: restaurantDoc.id,
+  restaurantData: restaurantDoc.data()
+});
+
+} catch (error) {
+await secureLogout();
+showError("Authentication failed.");
+}
+});
+
+==================================================
+
+3. NEVER store:
+
+- tokens
+- restaurantId
+- ownerId
+- roles
+- permissions
+
+inside:
+
+- localStorage
+- sessionStorage
+- indexedDB
+
+Keep sensitive data in runtime memory only.
+
+==================================================
+
+4. ALWAYS get fresh token before backend requests:
+
+const getAuthHeader = async (user) => {
+const token = await user.getIdToken(true);
+
+return {
+Authorization: "Bearer ${token}"
+};
+};
+
+==================================================
+
+5. ALL Firestore queries MUST:
+
+- scope by restaurantId
+- use limit()
+- filter isDeleted == false
+- use orderBy where needed
+
+Example:
+
+query(
+collection(db, "menus"),
+where("restaurantId", "==", restaurantId),
+where("isDeleted", "==", false),
+orderBy("createdAt", "desc"),
+limit(50)
+)
+
+==================================================
+
+6. ALL writes MUST include:
+
+- restaurantId
+- ownerId
+- createdAt
+- isDeleted
+
+Example menu document:
+
+{
+restaurantId,
+ownerId,
+name,
+description,
+category,
+price,
+isAvailable: true,
+isDeleted: false,
+createdAt: serverTimestamp()
+}
+
+==================================================
+
+7. VALIDATE ALL INPUTS
+
+Create centralized validation helpers.
+
+Sanitize strings:
+
+- trim
+- remove HTML brackets
+- enforce max length
+
+Validate numbers:
+
+- reject NaN
+- reject Infinity
+- enforce ranges
+
+Reject invalid categories and invalid enums.
+
+==================================================
+
+8. FILE UPLOAD SECURITY
+
+Allowed:
+
+- image/jpeg
+- image/png
+- image/webp
+
+Maximum:
+5MB
+
+Reject:
+
+- SVG
+- executables
+- unknown MIME types
+
+Uploads MUST:
+
+- use fresh Firebase token
+- go through backend only
+- never upload directly from frontend to Firebase Storage
+
+==================================================
+
+9. SNAPSHOT LISTENERS
+
+ALL listeners MUST:
+
+- include error callback
+- unsubscribe properly
+- auto logout on permission-denied
+- avoid duplicate listeners
+
+==================================================
+
+10. SOFT DELETE ONLY
+
+Never permanently delete menus or tables.
+
+Use:
+
+{
+isDeleted: true,
+deletedAt: serverTimestamp()
+}
+
+All queries MUST exclude deleted records.
+
+==================================================
+
+11. BOOKING STATUS VALIDATION
+
+Allowed statuses ONLY:
+
+- pending
+- confirmed
+- rejected
+- completed
+- cancelled
+
+Reject all other values.
+
+==================================================
+
+12. AUTO LOGOUT
+
+After 30 minutes inactivity:
+
+- unsubscribe listeners
+- clear runtime state
+- sign out Firebase
+- reload app
+
+==================================================
+
+13. FRONTEND MUST NEVER TRUST ROLES
+
+Permissions MUST be enforced through:
+
+- Firestore security rules
+- backend validation
+
+Never trust:
+
+- localStorage role
+- hidden fields
+- frontend state
+
+==================================================
+
+14. SAFE ERROR HANDLING
+
+Never expose:
+
+- Firebase internals
+- stack traces
+- backend internals
+- raw permission errors
+
+Show safe generic messages only.
+
+==================================================
+
+15. PREVENT DUPLICATE ACTIONS
+
+Protect:
+
+- duplicate submits
+- spam clicks
+- repeated uploads
+- repeated booking updates
+
+Use:
+
+- loading locks
+- disabled buttons
+- throttling
+
+==================================================
+
+16. KEEP UI IDENTICAL
+
+Do NOT:
+
+- redesign pages
+- change styling
+- rebuild components
+- modify layout
+
+ONLY apply:
+
+- security fixes
+- permission fixes
+- validation
+- auth hardening
+- listener cleanup
+- backend-safe integrations
+
+==================================================
+FINAL OBJECTIVE
+
+Make the dashboard production-grade secure while keeping the exact same UI and ensuring ALL frontend code matches the Firestore rules below so testing passes without permission issues.

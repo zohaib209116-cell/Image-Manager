@@ -1,7 +1,9 @@
 import { useState, useEffect } from "react";
 import { useAuth } from "@/hooks/useAuth";
 import { db } from "@/lib/firebase";
-import { collection, query, onSnapshot, addDoc, updateDoc, deleteDoc, doc } from "firebase/firestore";
+import { collection, query, where, onSnapshot, addDoc, updateDoc, doc, serverTimestamp, limit } from "firebase/firestore";
+import { sanitizeStr, sanitizeNum, isValidTableStatus, isValidTableLocation, safeErrorMessage, isPermissionDenied } from "@/lib/security";
+import { secureLogout } from "@/lib/auth";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -10,17 +12,19 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
 import { useToast } from "@/hooks/use-toast";
-import { Plus, Users, Edit, Trash2 } from "lucide-react";
+import { Plus, Users, Edit } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 
 export default function Tables() {
-  const { restaurantId } = useAuth();
+  const { restaurantId, user } = useAuth();
   const [tables, setTables] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingTable, setEditingTable] = useState<any>(null);
-  
+  const [isSaving, setIsSaving] = useState(false);
+  const [isDeleting, setIsDeleting] = useState<string | null>(null);
+
   const [tableNumber, setTableNumber] = useState("");
   const [capacity, setCapacity] = useState("");
   const [location, setLocation] = useState("indoor");
@@ -31,26 +35,33 @@ export default function Tables() {
   useEffect(() => {
     if (!restaurantId) return;
 
-    const q = query(collection(db, `tables/${restaurantId}/slots`));
+    const q = query(
+      collection(db, `tables/${restaurantId}/slots`),
+      where("isDeleted", "==", false),
+      limit(100)
+    );
 
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-      setTables(data.sort((a, b) => {
-        // Natural sort for table numbers like "T1", "T2", "T10"
-        return a.tableNumber.localeCompare(b.tableNumber, undefined, { numeric: true });
-      }));
-      setLoading(false);
-    });
+    const unsubscribe = onSnapshot(
+      q,
+      (snapshot) => {
+        const data = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
+        setTables(data.sort((a, b) =>
+          a.tableNumber.localeCompare(b.tableNumber, undefined, { numeric: true })
+        ));
+        setLoading(false);
+      },
+      async (error) => {
+        console.error("[Tables] listener error:", error);
+        if (isPermissionDenied(error)) await secureLogout();
+      }
+    );
 
     return () => unsubscribe();
   }, [restaurantId]);
 
   const resetForm = () => {
-    setTableNumber("");
-    setCapacity("");
-    setLocation("indoor");
-    setStatus("available");
-    setEditingTable(null);
+    setTableNumber(""); setCapacity(""); setLocation("indoor");
+    setStatus("available"); setEditingTable(null);
   };
 
   const handleOpenModal = (table: any = null) => {
@@ -67,67 +78,104 @@ export default function Tables() {
   };
 
   const handleSave = async () => {
-    if (!tableNumber || !capacity) {
-      toast({ title: "Validation Error", description: "Table number and capacity are required.", variant: "destructive" });
+    if (isSaving) return;
+
+    const cleanTableNum = sanitizeStr(tableNumber, 20);
+    const cleanCapacity = sanitizeNum(capacity, 1, 100);
+    const cleanLocation = isValidTableLocation(location) ? location : null;
+    const cleanStatus = isValidTableStatus(status) ? status : null;
+
+    if (!cleanTableNum) {
+      toast({ title: "Validation Error", description: "Table number/name is required.", variant: "destructive" });
+      return;
+    }
+    if (cleanCapacity === null) {
+      toast({ title: "Validation Error", description: "Capacity must be between 1 and 100.", variant: "destructive" });
+      return;
+    }
+    if (!cleanLocation) {
+      toast({ title: "Validation Error", description: "Invalid location selected.", variant: "destructive" });
+      return;
+    }
+    if (!cleanStatus) {
+      toast({ title: "Validation Error", description: "Invalid status selected.", variant: "destructive" });
       return;
     }
 
+    setIsSaving(true);
     try {
-      const data = {
-        tableNumber,
-        capacity: Number(capacity),
-        location,
-        status,
-        updatedAt: new Date().toISOString()
+      const baseData = {
+        tableNumber: cleanTableNum,
+        capacity: cleanCapacity,
+        location: cleanLocation,
+        status: cleanStatus,
+        restaurantId,
+        updatedAt: serverTimestamp(),
       };
 
       if (editingTable) {
-        await updateDoc(doc(db, `tables/${restaurantId}/slots`, editingTable.id), data);
+        await updateDoc(doc(db, `tables/${restaurantId}/slots`, editingTable.id), baseData);
         toast({ title: "Table Updated", description: "Table has been updated successfully." });
       } else {
         await addDoc(collection(db, `tables/${restaurantId}/slots`), {
-          ...data,
-          createdAt: new Date().toISOString()
+          ...baseData,
+          ownerId: user?.uid ?? "",
+          isDeleted: false,
+          createdAt: serverTimestamp(),
         });
         toast({ title: "Table Added", description: "Table has been added successfully." });
       }
       setIsModalOpen(false);
       resetForm();
     } catch (error) {
-      toast({ title: "Error", description: "Failed to save table.", variant: "destructive" });
+      toast({ title: "Error", description: safeErrorMessage(error), variant: "destructive" });
+    } finally {
+      setIsSaving(false);
     }
   };
 
   const handleDelete = async (id: string) => {
+    if (isDeleting) return;
+    setIsDeleting(id);
     try {
-      await deleteDoc(doc(db, `tables/${restaurantId}/slots`, id));
-      toast({ title: "Table Deleted", description: "Table has been removed." });
+      // Soft delete — never permanently remove
+      await updateDoc(doc(db, `tables/${restaurantId}/slots`, id), {
+        isDeleted: true,
+        deletedAt: serverTimestamp(),
+      });
+      toast({ title: "Table Removed", description: "Table has been removed." });
     } catch (error) {
-      toast({ title: "Error", description: "Failed to delete table.", variant: "destructive" });
+      toast({ title: "Error", description: safeErrorMessage(error), variant: "destructive" });
+    } finally {
+      setIsDeleting(null);
     }
   };
 
   const handleStatusChange = async (id: string, newStatus: string) => {
+    if (!isValidTableStatus(newStatus)) return;
     try {
-      await updateDoc(doc(db, `tables/${restaurantId}/slots`, id), { status: newStatus });
+      await updateDoc(doc(db, `tables/${restaurantId}/slots`, id), {
+        status: newStatus,
+        updatedAt: serverTimestamp(),
+      });
       toast({ title: "Status Updated", description: `Table status changed to ${newStatus}.` });
     } catch (error) {
-      toast({ title: "Error", description: "Failed to update status.", variant: "destructive" });
+      toast({ title: "Error", description: safeErrorMessage(error), variant: "destructive" });
     }
   };
 
-  const getStatusColor = (status: string) => {
-    switch(status) {
-      case 'available': return "bg-green-500/10 border-green-500 text-green-500";
-      case 'occupied': return "bg-red-500/10 border-red-500 text-red-500";
-      case 'reserved': return "bg-yellow-500/10 border-yellow-500 text-yellow-500";
-      case 'maintenance': return "bg-gray-500/10 border-gray-500 text-gray-400";
+  const getStatusColor = (s: string) => {
+    switch (s) {
+      case "available": return "bg-green-500/10 border-green-500 text-green-500";
+      case "occupied": return "bg-red-500/10 border-red-500 text-red-500";
+      case "reserved": return "bg-yellow-500/10 border-yellow-500 text-yellow-500";
+      case "maintenance": return "bg-gray-500/10 border-gray-500 text-gray-400";
       default: return "bg-card border-border";
     }
   };
 
   if (loading) {
-    return <div className="grid gap-4 md:grid-cols-4 lg:grid-cols-6">{[1,2,3,4,5,6,7,8].map(i => <Skeleton key={i} className="h-32 w-full" />)}</div>;
+    return <div className="grid gap-4 md:grid-cols-4 lg:grid-cols-6">{[1, 2, 3, 4, 5, 6, 7, 8].map(i => <Skeleton key={i} className="h-32 w-full" />)}</div>;
   }
 
   return (
@@ -141,8 +189,8 @@ export default function Tables() {
             <span className="flex items-center"><span className="w-3 h-3 rounded-full bg-yellow-500 mr-2"></span>Reserved</span>
           </div>
         </div>
-        
-        <Dialog open={isModalOpen} onOpenChange={(open) => { setIsModalOpen(open); if(!open) resetForm(); }}>
+
+        <Dialog open={isModalOpen} onOpenChange={(open) => { setIsModalOpen(open); if (!open) resetForm(); }}>
           <DialogTrigger asChild>
             <Button onClick={() => handleOpenModal()} className="gap-2">
               <Plus className="h-4 w-4" /> Add Table
@@ -156,19 +204,17 @@ export default function Tables() {
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-2">
                   <Label htmlFor="tableNumber">Table Number/Name</Label>
-                  <Input id="tableNumber" placeholder="e.g. T1, Balcony-1" value={tableNumber} onChange={(e) => setTableNumber(e.target.value)} />
+                  <Input id="tableNumber" placeholder="e.g. T1, Balcony-1" value={tableNumber} onChange={(e) => setTableNumber(e.target.value)} maxLength={20} />
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="capacity">Capacity (Seats)</Label>
-                  <Input id="capacity" type="number" min="1" value={capacity} onChange={(e) => setCapacity(e.target.value)} />
+                  <Input id="capacity" type="number" min="1" max="100" value={capacity} onChange={(e) => setCapacity(e.target.value)} />
                 </div>
               </div>
               <div className="space-y-2">
                 <Label>Location</Label>
                 <Select value={location} onValueChange={setLocation}>
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="indoor">Indoor</SelectItem>
                     <SelectItem value="outdoor">Outdoor</SelectItem>
@@ -180,9 +226,7 @@ export default function Tables() {
               <div className="space-y-2">
                 <Label>Current Status</Label>
                 <Select value={status} onValueChange={setStatus}>
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="available">Available</SelectItem>
                     <SelectItem value="occupied">Occupied</SelectItem>
@@ -196,23 +240,23 @@ export default function Tables() {
               {editingTable ? (
                 <AlertDialog>
                   <AlertDialogTrigger asChild>
-                    <Button variant="destructive" size="sm">Delete Table</Button>
+                    <Button variant="destructive" size="sm" disabled={isDeleting === editingTable?.id}>Remove Table</Button>
                   </AlertDialogTrigger>
                   <AlertDialogContent>
                     <AlertDialogHeader>
-                      <AlertDialogTitle>Delete Table</AlertDialogTitle>
-                      <AlertDialogDescription>Are you sure? This cannot be undone.</AlertDialogDescription>
+                      <AlertDialogTitle>Remove Table</AlertDialogTitle>
+                      <AlertDialogDescription>Are you sure? The table will be hidden from all views.</AlertDialogDescription>
                     </AlertDialogHeader>
                     <AlertDialogFooter>
                       <AlertDialogCancel>Cancel</AlertDialogCancel>
-                      <AlertDialogAction onClick={() => { handleDelete(editingTable.id); setIsModalOpen(false); }}>Delete</AlertDialogAction>
+                      <AlertDialogAction onClick={() => { handleDelete(editingTable.id); setIsModalOpen(false); }}>Remove</AlertDialogAction>
                     </AlertDialogFooter>
                   </AlertDialogContent>
                 </AlertDialog>
-              ) : <div></div>}
+              ) : <div />}
               <div className="flex gap-2">
                 <Button variant="outline" onClick={() => setIsModalOpen(false)}>Cancel</Button>
-                <Button onClick={handleSave}>Save</Button>
+                <Button onClick={handleSave} disabled={isSaving}>{isSaving ? "Saving..." : "Save"}</Button>
               </div>
             </div>
           </DialogContent>
@@ -227,12 +271,13 @@ export default function Tables() {
         ) : (
           tables.map(table => (
             <Card key={table.id} className={cn("relative overflow-hidden cursor-pointer border-2 transition-all hover:-translate-y-1", getStatusColor(table.status))}>
-              <div 
+              <div
                 className="absolute inset-0"
                 onClick={() => {
-                  const nextStatus = table.status === 'available' ? 'occupied' : 
-                                     table.status === 'occupied' ? 'available' : 
-                                     table.status === 'reserved' ? 'occupied' : 'available';
+                  const nextStatus =
+                    table.status === "available" ? "occupied" :
+                    table.status === "occupied" ? "available" :
+                    table.status === "reserved" ? "occupied" : "available";
                   handleStatusChange(table.id, nextStatus);
                 }}
               />
@@ -242,10 +287,9 @@ export default function Tables() {
                   <Users className="h-4 w-4 mr-1" /> {table.capacity}
                 </div>
                 <span className="text-xs mt-2 uppercase tracking-wider opacity-60 font-semibold">{table.location}</span>
-                
-                <Button 
-                  variant="ghost" 
-                  size="icon" 
+                <Button
+                  variant="ghost"
+                  size="icon"
                   className="absolute top-1 right-1 h-6 w-6 pointer-events-auto bg-background/50 hover:bg-background"
                   onClick={(e) => { e.stopPropagation(); handleOpenModal(table); }}
                 >

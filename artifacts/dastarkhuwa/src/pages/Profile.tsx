@@ -1,7 +1,8 @@
 import { useState, useEffect } from "react";
 import { useAuth } from "@/hooks/useAuth";
 import { db } from "@/lib/firebase";
-import { doc, getDoc, updateDoc } from "firebase/firestore";
+import { doc, getDoc, updateDoc, serverTimestamp } from "firebase/firestore";
+import { sanitizeStr, safeErrorMessage } from "@/lib/security";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -10,9 +11,11 @@ import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
 import { ImageUpload } from "@/components/ImageUpload";
-import { uploadRestaurantImage, uploadMultipleImages } from "@/lib/imageUpload";
+import { uploadRestaurantImage } from "@/lib/imageUpload";
 import { Loader2 } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
+
+const VALID_PRICE_RANGES = ["budget", "mid", "fine"] as const;
 
 export default function Profile() {
   const { restaurantId } = useAuth();
@@ -46,17 +49,14 @@ export default function Profile() {
     const fetchProfile = async () => {
       if (!restaurantId) return;
       try {
-        const docRef = doc(db, "restaurants", restaurantId);
-        const docSnap = await getDoc(docRef);
+        const docSnap = await getDoc(doc(db, "restaurants", restaurantId));
         if (docSnap.exists()) {
           const data = docSnap.data();
           setFormData(prev => ({ ...prev, ...data }));
-          if (data.hours) {
-            setHours(data.hours);
-          }
+          if (data.hours) setHours(data.hours);
         }
       } catch (error) {
-        console.error(error);
+        // Silent — profile simply stays blank on load failure
       } finally {
         setLoading(false);
       }
@@ -65,17 +65,34 @@ export default function Profile() {
   }, [restaurantId]);
 
   const handleSave = async () => {
-    if (!restaurantId) return;
+    if (!restaurantId || saving) return;
+
+    // Sanitize all string fields before write
+    const cleanName = sanitizeStr(formData.name, 120);
+    if (!cleanName) {
+      toast({ title: "Validation Error", description: "Restaurant name is required.", variant: "destructive" });
+      return;
+    }
+    const priceRange = VALID_PRICE_RANGES.includes(formData.priceRange as any) ? formData.priceRange : "mid";
+
     setSaving(true);
     try {
       await updateDoc(doc(db, "restaurants", restaurantId), {
-        ...formData,
+        name: cleanName,
+        city: sanitizeStr(formData.city, 100),
+        area: sanitizeStr(formData.area, 100),
+        cuisineType: sanitizeStr(formData.cuisineType, 80),
+        priceRange,
+        description: sanitizeStr(formData.description, 1000),
+        phone: sanitizeStr(formData.phone, 20),
+        coverImage: sanitizeStr(formData.coverImage, 2000),
+        galleryImages: Array.isArray(formData.galleryImages) ? formData.galleryImages.slice(0, 20) : [],
         hours,
-        updatedAt: new Date().toISOString()
+        updatedAt: serverTimestamp(),
       });
       toast({ title: "Profile Updated", description: "Your restaurant profile has been saved." });
     } catch (error) {
-      toast({ title: "Error", description: "Failed to update profile.", variant: "destructive" });
+      toast({ title: "Error", description: safeErrorMessage(error), variant: "destructive" });
     } finally {
       setSaving(false);
     }
@@ -116,8 +133,8 @@ export default function Profile() {
         <CardContent className="space-y-6">
           <div className="space-y-2">
             <Label>Cover Image</Label>
-            <ImageUpload 
-              onUpload={(url) => setFormData(prev => ({ ...prev, coverImage: url }))} 
+            <ImageUpload
+              onUpload={(url) => setFormData(prev => ({ ...prev, coverImage: url }))}
               uploadFn={uploadRestaurantImage}
               currentImageUrl={formData.coverImage}
             />
@@ -126,30 +143,28 @@ export default function Profile() {
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             <div className="space-y-2">
               <Label htmlFor="name">Restaurant Name</Label>
-              <Input id="name" value={formData.name} onChange={(e) => setFormData(prev => ({ ...prev, name: e.target.value }))} />
+              <Input id="name" value={formData.name} maxLength={120} onChange={(e) => setFormData(prev => ({ ...prev, name: e.target.value }))} />
             </div>
             <div className="space-y-2">
               <Label htmlFor="phone">Phone Number</Label>
-              <Input id="phone" value={formData.phone} onChange={(e) => setFormData(prev => ({ ...prev, phone: e.target.value }))} />
+              <Input id="phone" value={formData.phone} maxLength={20} onChange={(e) => setFormData(prev => ({ ...prev, phone: e.target.value }))} />
             </div>
             <div className="space-y-2">
               <Label htmlFor="city">City</Label>
-              <Input id="city" value={formData.city} onChange={(e) => setFormData(prev => ({ ...prev, city: e.target.value }))} />
+              <Input id="city" value={formData.city} maxLength={100} onChange={(e) => setFormData(prev => ({ ...prev, city: e.target.value }))} />
             </div>
             <div className="space-y-2">
               <Label htmlFor="area">Area / Neighborhood</Label>
-              <Input id="area" value={formData.area} onChange={(e) => setFormData(prev => ({ ...prev, area: e.target.value }))} />
+              <Input id="area" value={formData.area} maxLength={100} onChange={(e) => setFormData(prev => ({ ...prev, area: e.target.value }))} />
             </div>
             <div className="space-y-2">
               <Label htmlFor="cuisineType">Cuisine Type</Label>
-              <Input id="cuisineType" placeholder="e.g. Desi, Chinese, Continental" value={formData.cuisineType} onChange={(e) => setFormData(prev => ({ ...prev, cuisineType: e.target.value }))} />
+              <Input id="cuisineType" placeholder="e.g. Desi, Chinese, Continental" value={formData.cuisineType} maxLength={80} onChange={(e) => setFormData(prev => ({ ...prev, cuisineType: e.target.value }))} />
             </div>
             <div className="space-y-2">
               <Label>Price Range</Label>
               <Select value={formData.priceRange} onValueChange={(val) => setFormData(prev => ({ ...prev, priceRange: val }))}>
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
+                <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="budget">Budget (Rs)</SelectItem>
                   <SelectItem value="mid">Mid-range (Rs Rs)</SelectItem>
@@ -161,12 +176,13 @@ export default function Profile() {
 
           <div className="space-y-2">
             <Label htmlFor="description">Description</Label>
-            <Textarea 
-              id="description" 
+            <Textarea
+              id="description"
               rows={4}
               placeholder="Tell customers about your restaurant's vibe and specialties..."
-              value={formData.description} 
-              onChange={(e) => setFormData(prev => ({ ...prev, description: e.target.value }))} 
+              value={formData.description}
+              maxLength={1000}
+              onChange={(e) => setFormData(prev => ({ ...prev, description: e.target.value }))}
             />
           </div>
         </CardContent>
@@ -187,28 +203,18 @@ export default function Profile() {
                   <div className="flex items-center gap-4 flex-1">
                     {!dayData.closed ? (
                       <>
-                        <Input 
-                          type="time" 
-                          value={dayData.open} 
-                          onChange={(e) => handleHoursChange(day, 'open', e.target.value)}
-                          className="w-32"
-                        />
+                        <Input type="time" value={dayData.open} onChange={(e) => handleHoursChange(day, "open", e.target.value)} className="w-32" />
                         <span>to</span>
-                        <Input 
-                          type="time" 
-                          value={dayData.close} 
-                          onChange={(e) => handleHoursChange(day, 'close', e.target.value)}
-                          className="w-32"
-                        />
+                        <Input type="time" value={dayData.close} onChange={(e) => handleHoursChange(day, "close", e.target.value)} className="w-32" />
                       </>
                     ) : (
                       <span className="text-muted-foreground italic px-4">Closed all day</span>
                     )}
                   </div>
-                  <Button 
-                    variant={dayData.closed ? "default" : "outline"} 
+                  <Button
+                    variant={dayData.closed ? "default" : "outline"}
                     size="sm"
-                    onClick={() => handleHoursChange(day, 'closed', !dayData.closed)}
+                    onClick={() => handleHoursChange(day, "closed", !dayData.closed)}
                   >
                     {dayData.closed ? "Open" : "Mark Closed"}
                   </Button>

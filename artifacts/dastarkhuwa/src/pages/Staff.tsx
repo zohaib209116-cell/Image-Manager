@@ -1,7 +1,9 @@
 import { useState, useEffect } from "react";
 import { useAuth } from "@/hooks/useAuth";
 import { db } from "@/lib/firebase";
-import { collection, query, onSnapshot, addDoc, updateDoc, deleteDoc, doc } from "firebase/firestore";
+import { collection, query, where, onSnapshot, addDoc, updateDoc, doc, serverTimestamp, limit } from "firebase/firestore";
+import { sanitizeStr, isValidStaffRole, safeErrorMessage, isPermissionDenied } from "@/lib/security";
+import { secureLogout } from "@/lib/auth";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -11,17 +13,19 @@ import { Switch } from "@/components/ui/switch";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
 import { useToast } from "@/hooks/use-toast";
-import { Plus, User, Phone, Edit, Trash2, ShieldCheck } from "lucide-react";
+import { Plus, Phone, Edit, Trash2, ShieldCheck } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 
 export default function Staff() {
-  const { restaurantId } = useAuth();
+  const { restaurantId, user } = useAuth();
   const [staff, setStaff] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingStaff, setEditingStaff] = useState<any>(null);
-  
+  const [isSaving, setIsSaving] = useState(false);
+  const [isDeleting, setIsDeleting] = useState<string | null>(null);
+
   const [name, setName] = useState("");
   const [role, setRole] = useState("Waiter");
   const [phone, setPhone] = useState("");
@@ -32,23 +36,30 @@ export default function Staff() {
   useEffect(() => {
     if (!restaurantId) return;
 
-    const q = query(collection(db, `staff/${restaurantId}/members`));
+    const q = query(
+      collection(db, `staff/${restaurantId}/members`),
+      where("isDeleted", "==", false),
+      limit(100)
+    );
 
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-      setStaff(data);
-      setLoading(false);
-    });
+    const unsubscribe = onSnapshot(
+      q,
+      (snapshot) => {
+        const data = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
+        setStaff(data);
+        setLoading(false);
+      },
+      async (error) => {
+        console.error("[Staff] listener error:", error);
+        if (isPermissionDenied(error)) await secureLogout();
+      }
+    );
 
     return () => unsubscribe();
   }, [restaurantId]);
 
   const resetForm = () => {
-    setName("");
-    setRole("Waiter");
-    setPhone("");
-    setIsActive(true);
-    setEditingStaff(null);
+    setName(""); setRole("Waiter"); setPhone(""); setIsActive(true); setEditingStaff(null);
   };
 
   const handleOpenModal = (member: any = null) => {
@@ -65,48 +76,72 @@ export default function Staff() {
   };
 
   const handleSave = async () => {
-    if (!name || !role) {
-      toast({ title: "Validation Error", description: "Name and role are required.", variant: "destructive" });
+    if (isSaving) return;
+
+    const cleanName = sanitizeStr(name, 100);
+    const cleanPhone = sanitizeStr(phone, 20);
+    const cleanRole = isValidStaffRole(role) ? role : null;
+
+    if (!cleanName) {
+      toast({ title: "Validation Error", description: "Name is required (max 100 chars).", variant: "destructive" });
+      return;
+    }
+    if (!cleanRole) {
+      toast({ title: "Validation Error", description: "Invalid role selected.", variant: "destructive" });
       return;
     }
 
+    setIsSaving(true);
     try {
-      const data = {
-        name,
-        role,
-        phone,
+      const baseData = {
+        name: cleanName,
+        role: cleanRole,
+        phone: cleanPhone,
         isActive,
-        updatedAt: new Date().toISOString()
+        restaurantId,
+        updatedAt: serverTimestamp(),
       };
 
       if (editingStaff) {
-        await updateDoc(doc(db, `staff/${restaurantId}/members`, editingStaff.id), data);
+        await updateDoc(doc(db, `staff/${restaurantId}/members`, editingStaff.id), baseData);
         toast({ title: "Staff Updated", description: "Staff member has been updated." });
       } else {
         await addDoc(collection(db, `staff/${restaurantId}/members`), {
-          ...data,
-          createdAt: new Date().toISOString()
+          ...baseData,
+          ownerId: user?.uid ?? "",
+          isDeleted: false,
+          createdAt: serverTimestamp(),
         });
         toast({ title: "Staff Added", description: "Staff member has been added successfully." });
       }
       setIsModalOpen(false);
       resetForm();
     } catch (error) {
-      toast({ title: "Error", description: "Failed to save staff member.", variant: "destructive" });
+      toast({ title: "Error", description: safeErrorMessage(error), variant: "destructive" });
+    } finally {
+      setIsSaving(false);
     }
   };
 
   const handleDelete = async (id: string) => {
+    if (isDeleting) return;
+    setIsDeleting(id);
     try {
-      await deleteDoc(doc(db, `staff/${restaurantId}/members`, id));
-      toast({ title: "Staff Deleted", description: "Staff member has been removed." });
+      // Soft delete — never permanently remove
+      await updateDoc(doc(db, `staff/${restaurantId}/members`, id), {
+        isDeleted: true,
+        deletedAt: serverTimestamp(),
+      });
+      toast({ title: "Staff Removed", description: "Staff member has been removed." });
     } catch (error) {
-      toast({ title: "Error", description: "Failed to delete staff member.", variant: "destructive" });
+      toast({ title: "Error", description: safeErrorMessage(error), variant: "destructive" });
+    } finally {
+      setIsDeleting(null);
     }
   };
 
   if (loading) {
-    return <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">{[1,2,3].map(i => <Skeleton key={i} className="h-32 w-full" />)}</div>;
+    return <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">{[1, 2, 3].map(i => <Skeleton key={i} className="h-32 w-full" />)}</div>;
   }
 
   return (
@@ -116,8 +151,8 @@ export default function Staff() {
           <h2 className="text-3xl font-bold tracking-tight">Staff Management</h2>
           <p className="text-muted-foreground mt-1">Manage roles and access for your team.</p>
         </div>
-        
-        <Dialog open={isModalOpen} onOpenChange={(open) => { setIsModalOpen(open); if(!open) resetForm(); }}>
+
+        <Dialog open={isModalOpen} onOpenChange={(open) => { setIsModalOpen(open); if (!open) resetForm(); }}>
           <DialogTrigger asChild>
             <Button onClick={() => handleOpenModal()} className="gap-2">
               <Plus className="h-4 w-4" /> Add Staff
@@ -129,15 +164,13 @@ export default function Staff() {
             </DialogHeader>
             <div className="grid gap-4 py-4">
               <div className="space-y-2">
-                <Label htmlFor="name">Full Name</Label>
-                <Input id="name" value={name} onChange={(e) => setName(e.target.value)} />
+                <Label htmlFor="staff-name">Full Name</Label>
+                <Input id="staff-name" value={name} onChange={(e) => setName(e.target.value)} maxLength={100} />
               </div>
               <div className="space-y-2">
                 <Label>Role</Label>
                 <Select value={role} onValueChange={setRole}>
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="Manager">Manager</SelectItem>
                     <SelectItem value="Chef">Chef</SelectItem>
@@ -147,8 +180,8 @@ export default function Staff() {
                 </Select>
               </div>
               <div className="space-y-2">
-                <Label htmlFor="phone">Phone Number</Label>
-                <Input id="phone" value={phone} onChange={(e) => setPhone(e.target.value)} />
+                <Label htmlFor="staff-phone">Phone Number</Label>
+                <Input id="staff-phone" value={phone} onChange={(e) => setPhone(e.target.value)} maxLength={20} />
               </div>
               <div className="flex items-center space-x-2 pt-2">
                 <Switch id="active" checked={isActive} onCheckedChange={setIsActive} />
@@ -157,7 +190,7 @@ export default function Staff() {
             </div>
             <div className="flex justify-end gap-2">
               <Button variant="outline" onClick={() => setIsModalOpen(false)}>Cancel</Button>
-              <Button onClick={handleSave}>Save</Button>
+              <Button onClick={handleSave} disabled={isSaving}>{isSaving ? "Saving..." : "Save"}</Button>
             </div>
           </DialogContent>
         </Dialog>
@@ -175,7 +208,7 @@ export default function Staff() {
                 <div className="flex justify-between items-start">
                   <div className="flex items-center gap-3">
                     <div className="h-10 w-10 rounded-full bg-primary/20 flex items-center justify-center text-primary font-bold">
-                      {member.name.charAt(0)}
+                      {member.name?.charAt(0)}
                     </div>
                     <div>
                       <h3 className="font-semibold text-lg">{member.name}</h3>
@@ -190,30 +223,30 @@ export default function Staff() {
                     </Button>
                     <AlertDialog>
                       <AlertDialogTrigger asChild>
-                        <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive/70 hover:text-destructive">
+                        <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive/70 hover:text-destructive" disabled={isDeleting === member.id}>
                           <Trash2 className="h-4 w-4" />
                         </Button>
                       </AlertDialogTrigger>
                       <AlertDialogContent>
                         <AlertDialogHeader>
                           <AlertDialogTitle>Remove Staff Member</AlertDialogTitle>
-                          <AlertDialogDescription>Are you sure you want to remove {member.name}? This action cannot be undone.</AlertDialogDescription>
+                          <AlertDialogDescription>Are you sure you want to remove {member.name}?</AlertDialogDescription>
                         </AlertDialogHeader>
                         <AlertDialogFooter>
                           <AlertDialogCancel>Cancel</AlertDialogCancel>
-                          <AlertDialogAction className="bg-destructive text-destructive-foreground hover:bg-destructive/90" onClick={() => handleDelete(member.id)}>Delete</AlertDialogAction>
+                          <AlertDialogAction className="bg-destructive text-destructive-foreground hover:bg-destructive/90" onClick={() => handleDelete(member.id)}>Remove</AlertDialogAction>
                         </AlertDialogFooter>
                       </AlertDialogContent>
                     </AlertDialog>
                   </div>
                 </div>
-                
+
                 {member.phone && (
                   <div className="mt-4 flex items-center text-sm text-muted-foreground border-t border-border pt-4">
                     <Phone className="h-4 w-4 mr-2" /> {member.phone}
                   </div>
                 )}
-                
+
                 {!member.isActive && (
                   <div className="mt-2 text-xs font-semibold text-destructive">Inactive Account</div>
                 )}

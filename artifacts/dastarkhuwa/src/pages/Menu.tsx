@@ -1,7 +1,9 @@
 import { useState, useEffect } from "react";
 import { useAuth } from "@/hooks/useAuth";
 import { db } from "@/lib/firebase";
-import { collection, query, onSnapshot, addDoc, updateDoc, deleteDoc, doc } from "firebase/firestore";
+import { collection, query, where, onSnapshot, addDoc, updateDoc, doc, serverTimestamp, limit } from "firebase/firestore";
+import { sanitizeStr, sanitizeNum, isValidMenuCategory, safeErrorMessage, isPermissionDenied } from "@/lib/security";
+import { secureLogout } from "@/lib/auth";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -19,12 +21,14 @@ import { Plus, Edit, Trash2 } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
 
 export default function Menu() {
-  const { restaurantId } = useAuth();
+  const { restaurantId, user } = useAuth();
   const [items, setItems] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingItem, setEditingItem] = useState<any>(null);
-  
+  const [isSaving, setIsSaving] = useState(false);
+  const [isDeleting, setIsDeleting] = useState<string | null>(null);
+
   const [name, setName] = useState("");
   const [price, setPrice] = useState("");
   const [category, setCategory] = useState("Starters");
@@ -37,24 +41,31 @@ export default function Menu() {
   useEffect(() => {
     if (!restaurantId) return;
 
-    const q = query(collection(db, `menus/${restaurantId}/items`));
+    const q = query(
+      collection(db, `menus/${restaurantId}/items`),
+      where("isDeleted", "==", false),
+      limit(50)
+    );
 
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-      setItems(data);
-      setLoading(false);
-    });
+    const unsubscribe = onSnapshot(
+      q,
+      (snapshot) => {
+        const data = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
+        setItems(data);
+        setLoading(false);
+      },
+      async (error) => {
+        console.error("[Menu] listener error:", error);
+        if (isPermissionDenied(error)) await secureLogout();
+      }
+    );
 
     return () => unsubscribe();
   }, [restaurantId]);
 
   const resetForm = () => {
-    setName("");
-    setPrice("");
-    setCategory("Starters");
-    setDescription("");
-    setImageUrl("");
-    setIsAvailable(true);
+    setName(""); setPrice(""); setCategory("Starters");
+    setDescription(""); setImageUrl(""); setIsAvailable(true);
     setEditingItem(null);
   };
 
@@ -74,66 +85,98 @@ export default function Menu() {
   };
 
   const handleSave = async () => {
-    if (!name || !price || !category) {
-      toast({ title: "Validation Error", description: "Name, price, and category are required.", variant: "destructive" });
+    if (isSaving) return;
+
+    const cleanName = sanitizeStr(name, 120);
+    const cleanDesc = sanitizeStr(description, 500);
+    const cleanPrice = sanitizeNum(price, 0, 999999);
+    const cleanCategory = isValidMenuCategory(category) ? category : null;
+
+    if (!cleanName) {
+      toast({ title: "Validation Error", description: "Name is required (max 120 chars).", variant: "destructive" });
+      return;
+    }
+    if (cleanPrice === null) {
+      toast({ title: "Validation Error", description: "Price must be a valid number between 0 and 999,999.", variant: "destructive" });
+      return;
+    }
+    if (!cleanCategory) {
+      toast({ title: "Validation Error", description: "Invalid category selected.", variant: "destructive" });
       return;
     }
 
+    setIsSaving(true);
     try {
-      const data = {
-        name,
-        price: Number(price),
-        category,
-        description,
-        imageUrl,
+      const baseData = {
+        name: cleanName,
+        price: cleanPrice,
+        category: cleanCategory,
+        description: cleanDesc,
+        imageUrl: sanitizeStr(imageUrl, 2000),
         isAvailable,
-        updatedAt: new Date().toISOString()
+        restaurantId,
+        updatedAt: serverTimestamp(),
       };
 
       if (editingItem) {
-        await updateDoc(doc(db, `menus/${restaurantId}/items`, editingItem.id), data);
+        await updateDoc(doc(db, `menus/${restaurantId}/items`, editingItem.id), baseData);
         toast({ title: "Item Updated", description: "Menu item has been updated successfully." });
       } else {
         await addDoc(collection(db, `menus/${restaurantId}/items`), {
-          ...data,
-          createdAt: new Date().toISOString()
+          ...baseData,
+          ownerId: user?.uid ?? "",
+          isDeleted: false,
+          createdAt: serverTimestamp(),
         });
         toast({ title: "Item Added", description: "Menu item has been added successfully." });
       }
       setIsModalOpen(false);
       resetForm();
     } catch (error) {
-      toast({ title: "Error", description: "Failed to save menu item.", variant: "destructive" });
+      toast({ title: "Error", description: safeErrorMessage(error), variant: "destructive" });
+    } finally {
+      setIsSaving(false);
     }
   };
 
   const handleDelete = async (id: string) => {
+    if (isDeleting) return;
+    setIsDeleting(id);
     try {
-      await deleteDoc(doc(db, `menus/${restaurantId}/items`, id));
-      toast({ title: "Item Deleted", description: "Menu item has been removed." });
+      // Soft delete — never permanently remove
+      await updateDoc(doc(db, `menus/${restaurantId}/items`, id), {
+        isDeleted: true,
+        deletedAt: serverTimestamp(),
+      });
+      toast({ title: "Item Removed", description: "Menu item has been removed." });
     } catch (error) {
-      toast({ title: "Error", description: "Failed to delete item.", variant: "destructive" });
+      toast({ title: "Error", description: safeErrorMessage(error), variant: "destructive" });
+    } finally {
+      setIsDeleting(null);
     }
   };
 
   const toggleAvailability = async (id: string, current: boolean) => {
     try {
-      await updateDoc(doc(db, `menus/${restaurantId}/items`, id), { isAvailable: !current });
+      await updateDoc(doc(db, `menus/${restaurantId}/items`, id), {
+        isAvailable: !current,
+        updatedAt: serverTimestamp(),
+      });
       toast({ title: "Availability Updated" });
     } catch (error) {
-      toast({ title: "Error", description: "Failed to update availability.", variant: "destructive" });
+      toast({ title: "Error", description: safeErrorMessage(error), variant: "destructive" });
     }
   };
 
   if (loading) {
-    return <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">{[1,2,3,4,5].map(i => <Skeleton key={i} className="h-64 w-full" />)}</div>;
+    return <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">{[1, 2, 3, 4, 5].map(i => <Skeleton key={i} className="h-64 w-full" />)}</div>;
   }
 
   return (
     <div className="space-y-6">
       <div className="flex justify-between items-center">
         <h2 className="text-3xl font-bold tracking-tight">Menu Management</h2>
-        <Dialog open={isModalOpen} onOpenChange={(open) => { setIsModalOpen(open); if(!open) resetForm(); }}>
+        <Dialog open={isModalOpen} onOpenChange={(open) => { setIsModalOpen(open); if (!open) resetForm(); }}>
           <DialogTrigger asChild>
             <Button onClick={() => handleOpenModal()} className="gap-2">
               <Plus className="h-4 w-4" /> Add Item
@@ -146,27 +189,21 @@ export default function Menu() {
             <div className="grid gap-4 py-4 max-h-[70vh] overflow-y-auto">
               <div className="space-y-2">
                 <Label>Image</Label>
-                <ImageUpload 
-                  onUpload={setImageUrl} 
-                  uploadFn={uploadMenuImage} 
-                  currentImageUrl={imageUrl}
-                />
+                <ImageUpload onUpload={setImageUrl} uploadFn={uploadMenuImage} currentImageUrl={imageUrl} />
               </div>
               <div className="space-y-2">
-                <Label htmlFor="name">Name</Label>
-                <Input id="name" value={name} onChange={(e) => setName(e.target.value)} />
+                <Label htmlFor="item-name">Name</Label>
+                <Input id="item-name" value={name} onChange={(e) => setName(e.target.value)} maxLength={120} />
               </div>
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-2">
-                  <Label htmlFor="price">Price (PKR)</Label>
-                  <Input id="price" type="number" value={price} onChange={(e) => setPrice(e.target.value)} />
+                  <Label htmlFor="item-price">Price (PKR)</Label>
+                  <Input id="item-price" type="number" min="0" max="999999" value={price} onChange={(e) => setPrice(e.target.value)} />
                 </div>
                 <div className="space-y-2">
                   <Label>Category</Label>
                   <Select value={category} onValueChange={setCategory}>
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
+                    <SelectTrigger><SelectValue /></SelectTrigger>
                     <SelectContent>
                       <SelectItem value="Starters">Starters</SelectItem>
                       <SelectItem value="Main Course">Main Course</SelectItem>
@@ -178,8 +215,8 @@ export default function Menu() {
                 </div>
               </div>
               <div className="space-y-2">
-                <Label htmlFor="description">Description</Label>
-                <Textarea id="description" value={description} onChange={(e) => setDescription(e.target.value)} />
+                <Label htmlFor="item-desc">Description</Label>
+                <Textarea id="item-desc" value={description} onChange={(e) => setDescription(e.target.value)} maxLength={500} />
               </div>
               <div className="flex items-center space-x-2">
                 <Switch id="available" checked={isAvailable} onCheckedChange={setIsAvailable} />
@@ -188,7 +225,7 @@ export default function Menu() {
             </div>
             <div className="flex justify-end gap-2">
               <Button variant="outline" onClick={() => setIsModalOpen(false)}>Cancel</Button>
-              <Button onClick={handleSave}>Save</Button>
+              <Button onClick={handleSave} disabled={isSaving}>{isSaving ? "Saving..." : "Save"}</Button>
             </div>
           </DialogContent>
         </Dialog>
@@ -201,15 +238,13 @@ export default function Menu() {
           </div>
         ) : (
           items.map(item => (
-            <Card key={item.id} className={`overflow-hidden transition-opacity ${!item.isAvailable ? 'opacity-60' : ''}`}>
+            <Card key={item.id} className={`overflow-hidden transition-opacity ${!item.isAvailable ? "opacity-60" : ""}`}>
               {item.imageUrl ? (
                 <div className="h-48 w-full overflow-hidden bg-muted">
                   <img src={item.imageUrl} alt={item.name} className="h-full w-full object-cover transition-transform hover:scale-105" />
                 </div>
               ) : (
-                <div className="h-48 w-full bg-muted flex items-center justify-center text-muted-foreground">
-                  No Image
-                </div>
+                <div className="h-48 w-full bg-muted flex items-center justify-center text-muted-foreground">No Image</div>
               )}
               <CardContent className="p-4">
                 <div className="flex justify-between items-start mb-2">
@@ -222,14 +257,10 @@ export default function Menu() {
                 {item.description && (
                   <p className="text-sm text-muted-foreground line-clamp-2 mb-4 h-10">{item.description}</p>
                 )}
-                
                 <div className="flex items-center justify-between mt-4 pt-4 border-t border-border">
                   <div className="flex items-center space-x-2">
-                    <Switch 
-                      checked={item.isAvailable} 
-                      onCheckedChange={() => toggleAvailability(item.id, item.isAvailable)} 
-                    />
-                    <span className="text-xs text-muted-foreground">{item.isAvailable ? 'Available' : 'Unavailable'}</span>
+                    <Switch checked={item.isAvailable} onCheckedChange={() => toggleAvailability(item.id, item.isAvailable)} />
+                    <span className="text-xs text-muted-foreground">{item.isAvailable ? "Available" : "Unavailable"}</span>
                   </div>
                   <div className="flex gap-2">
                     <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-foreground" onClick={() => handleOpenModal(item)}>
@@ -237,21 +268,21 @@ export default function Menu() {
                     </Button>
                     <AlertDialog>
                       <AlertDialogTrigger asChild>
-                        <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive hover:text-destructive hover:bg-destructive/10">
+                        <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive hover:text-destructive hover:bg-destructive/10" disabled={isDeleting === item.id}>
                           <Trash2 className="h-4 w-4" />
                         </Button>
                       </AlertDialogTrigger>
                       <AlertDialogContent>
                         <AlertDialogHeader>
-                          <AlertDialogTitle>Delete Menu Item</AlertDialogTitle>
+                          <AlertDialogTitle>Remove Menu Item</AlertDialogTitle>
                           <AlertDialogDescription>
-                            Are you sure you want to delete {item.name}? This action cannot be undone.
+                            Are you sure you want to remove {item.name}?
                           </AlertDialogDescription>
                         </AlertDialogHeader>
                         <AlertDialogFooter>
                           <AlertDialogCancel>Cancel</AlertDialogCancel>
                           <AlertDialogAction className="bg-destructive text-destructive-foreground hover:bg-destructive/90" onClick={() => handleDelete(item.id)}>
-                            Delete
+                            Remove
                           </AlertDialogAction>
                         </AlertDialogFooter>
                       </AlertDialogContent>
