@@ -1,13 +1,36 @@
 import { useState } from "react";
 import { useLocation } from "wouter";
-import { signInWithEmailAndPassword } from "firebase/auth";
-import { doc, getDoc } from "firebase/firestore";
+import { signInWithEmailAndPassword, getAuth } from "firebase/auth";
+import { getDocs, getDoc, collection, query, where, doc } from "firebase/firestore";
 import { auth, db } from "@/lib/firebase";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
 import { Loader2 } from "lucide-react";
+
+async function restaurantExists(uid: string): Promise<boolean> {
+  // Method 1: ownerId field
+  try {
+    const snap = await getDocs(query(collection(db, "restaurants"), where("ownerId", "==", uid)));
+    if (!snap.empty) return true;
+  } catch (_) {}
+
+  // Method 2: doc ID == uid
+  try {
+    const snap = await getDoc(doc(db, "restaurants", uid));
+    if (snap.exists()) return true;
+  } catch (_) {}
+
+  // Method 3: full scan
+  try {
+    const all = await getDocs(collection(db, "restaurants"));
+    const found = all.docs.some(d => d.data().ownerId === uid || d.id === uid);
+    if (found) return true;
+  } catch (_) {}
+
+  return false;
+}
 
 export default function Login() {
   const [email, setEmail] = useState("");
@@ -21,8 +44,11 @@ export default function Login() {
     setLoading(true);
     try {
       const credential = await signInWithEmailAndPassword(auth, email, password);
-      const docSnap = await getDoc(doc(db, "restaurants", credential.user.uid));
-      if (!docSnap.exists()) {
+      const uid = credential.user.uid;
+      console.log("[Login] Signed in UID:", uid);
+
+      const found = await restaurantExists(uid);
+      if (!found) {
         await auth.signOut();
         toast({
           title: "Access Denied",
@@ -66,6 +92,7 @@ export default function Login() {
               onChange={(e) => setEmail(e.target.value)}
               required
               className="bg-input border-border"
+              autoComplete="username"
             />
           </div>
           <div className="space-y-2">

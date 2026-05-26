@@ -1,0 +1,102 @@
+Fix the login authentication problem in this dashboard.
+
+The problem is: after successful Firebase login, 
+the dashboard shows "No restaurant profile found 
+for this account" even though the restaurant exists 
+in Firestore.
+
+MY FIREBASE DETAILS:
+- Project ID: restaurant-reservation-s-4f34f
+- Collection name: restaurants (lowercase)
+- Field to match: ownerId (camelCase)
+- Logged in user email: karahi@gmail.com
+- That user UID: iOdkITeq2laJg0Lx0QADe2pHw682
+
+THE FIX — Replace the restaurant lookup code with 
+this exact code:
+
+async function findRestaurant(user) {
+  const db = getFirestore();
+  
+  // Method 1: Search by ownerId field
+  try {
+    const q = query(
+      collection(db, "restaurants"),
+      where("ownerId", "==", user.uid)
+    );
+    const snapshot = await getDocs(q);
+    
+    if (!snapshot.empty) {
+      return {
+        id: snapshot.docs[0].id,
+        data: snapshot.docs[0].data()
+      };
+    }
+  } catch (e) {
+    console.log("Method 1 failed:", e);
+  }
+
+  // Method 2: Try document ID == user UID
+  try {
+    const docRef = doc(db, "restaurants", user.uid);
+    const docSnap = await getDoc(docRef);
+    
+    if (docSnap.exists()) {
+      return {
+        id: docSnap.id,
+        data: docSnap.data()
+      };
+    }
+  } catch (e) {
+    console.log("Method 2 failed:", e);
+  }
+
+  // Method 3: Get ALL restaurants and find match
+  try {
+    const allSnap = await getDocs(collection(db, "restaurants"));
+    
+    allSnap.forEach(doc => {
+      console.log("Restaurant found:", doc.id, doc.data());
+      console.log("ownerId in doc:", doc.data().ownerId);
+      console.log("current user uid:", user.uid);
+      console.log("match:", doc.data().ownerId === user.uid);
+    });
+
+    const match = allSnap.docs.find(d => 
+      d.data().ownerId === user.uid ||
+      d.data().ownerId === user.uid.trim() ||
+      d.id === user.uid
+    );
+
+    if (match) {
+      return {
+        id: match.id,
+        data: match.data()
+      };
+    }
+  } catch (e) {
+    console.log("Method 3 failed:", e);
+  }
+
+  return null;
+}
+
+// Use this function after login:
+onAuthStateChanged(auth, async (user) => {
+  if (user) {
+    console.log("Logged in user UID:", user.uid);
+    const restaurant = await findRestaurant(user);
+    
+    if (restaurant) {
+      console.log("Restaurant found!", restaurant);
+      // load dashboard with restaurant.data
+      loadDashboard(restaurant.id, restaurant.data);
+    } else {
+      console.log("No restaurant found for UID:", user.uid);
+      showError("No restaurant profile found for this account");
+    }
+  }
+});
+
+Also open browser console (F12) after login and 
+show me any console.log output so we can debug.
