@@ -15,7 +15,7 @@ import {
   Menu,
   X,
 } from "lucide-react";
-import { collection, query, where, onSnapshot } from "firebase/firestore";
+import { collection, query, where, onSnapshot, orderBy } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { secureLogout } from "@/lib/auth";
 import { cn } from "@/lib/utils";
@@ -67,17 +67,39 @@ export function Layout({ children }: { children: React.ReactNode }) {
 
   // ── Live unread notification count ──────────────────────────────────────────
   useEffect(() => {
+
     if (!restaurantId) return;
+
     const q = query(
-      collection(db, `notifications/${restaurantId}/alerts`),
-      where("read", "==", false)
+      collection(db, "notifications"),
+
+      where("restaurantId", "==", restaurantId),
+
+      where("read", "==", false),
+
+      orderBy("createdAt", "desc"),
+
+      limit(50)
     );
+
     const unsubscribe = onSnapshot(
+
       q,
-      (snap) => setUnreadCount(snap.docs.length),
-      (err) => console.error("[Notifications] listener error:", err)
+
+      (snap) => {
+        setUnreadCount(snap.docs.length);
+      },
+
+      (err) => {
+        console.error(
+          "[Notifications] Listener error:",
+          err
+        );
+      }
     );
+
     return () => unsubscribe();
+
   }, [restaurantId]);
 
   // ── Live booking alert — sound + toast ──────────────────────────────────────
