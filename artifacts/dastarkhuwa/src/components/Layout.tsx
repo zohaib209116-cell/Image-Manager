@@ -15,7 +15,7 @@ import {
   Menu,
   X,
 } from "lucide-react";
-import { collection, query, where, onSnapshot, orderBy } from "firebase/firestore";
+import { collection, query, where, onSnapshot, orderBy, limit } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { secureLogout } from "@/lib/auth";
 import { cn } from "@/lib/utils";
