@@ -67,39 +67,26 @@ export function Layout({ children }: { children: React.ReactNode }) {
 
   // ── Live unread notification count ──────────────────────────────────────────
   useEffect(() => {
-
     if (!restaurantId) return;
 
     const q = query(
-      collection(db, "notifications"),
-
-      where("restaurantId", "==", restaurantId),
-
+      collection(db, `notifications/${restaurantId}/alerts`),
       where("read", "==", false),
-
       orderBy("createdAt", "desc"),
-
       limit(50)
     );
 
     const unsubscribe = onSnapshot(
-
       q,
-
       (snap) => {
         setUnreadCount(snap.docs.length);
       },
-
       (err) => {
-        console.error(
-          "[Notifications] Listener error:",
-          err
-        );
+        console.error("[Notifications] Listener error:", err);
       }
     );
 
     return () => unsubscribe();
-
   }, [restaurantId]);
 
   // ── Live booking alert — sound + toast ──────────────────────────────────────
