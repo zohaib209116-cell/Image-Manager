@@ -3,8 +3,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { db } from "@/lib/firebase";
 import { collection, query, where, onSnapshot, doc, updateDoc, limit, serverTimestamp } from "firebase/firestore";
 import { formatKarachiTime } from "@/lib/utils";
-import { safeErrorMessage, isPermissionDenied, isValidBookingStatus } from "@/lib/security";
-import { secureLogout } from "@/lib/auth";
+import { safeErrorMessage, isValidBookingStatus } from "@/lib/security";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -15,7 +14,7 @@ import { Check, X, CheckCheck, Search } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
 
 export default function Bookings() {
-  const { restaurantId } = useAuth();
+  const { restaurantId, loading: authLoading } = useAuth();
   const [bookings, setBookings] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState("");
@@ -25,8 +24,10 @@ export default function Bookings() {
   const { toast } = useToast();
 
   useEffect(() => {
-    if (!restaurantId) return;
+    if (authLoading) return;
+    if (!restaurantId) { setLoading(false); return; }
 
+    setLoading(true);
     const q = query(
       collection(db, "bookings"),
       where("restaurantId", "==", restaurantId),
@@ -41,14 +42,14 @@ export default function Bookings() {
         setBookings(data.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()));
         setLoading(false);
       },
-      async (error) => {
+      (error) => {
         console.error("[Bookings] listener error:", error);
-        if (isPermissionDenied(error)) await secureLogout();
+        setLoading(false);
       }
     );
 
     return () => unsubscribe();
-  }, [restaurantId]);
+  }, [restaurantId, authLoading]);
 
   const updateStatus = async (id: string, newStatus: string) => {
     if (!isValidBookingStatus(newStatus)) {

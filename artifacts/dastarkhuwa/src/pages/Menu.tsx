@@ -2,8 +2,7 @@ import { useState, useEffect } from "react";
 import { useAuth } from "@/hooks/useAuth";
 import { db } from "@/lib/firebase";
 import { collection, query, where, onSnapshot, addDoc, updateDoc, doc, serverTimestamp, limit } from "firebase/firestore";
-import { sanitizeStr, sanitizeNum, isValidMenuCategory, safeErrorMessage, isPermissionDenied } from "@/lib/security";
-import { secureLogout } from "@/lib/auth";
+import { sanitizeStr, sanitizeNum, isValidMenuCategory, safeErrorMessage } from "@/lib/security";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -21,7 +20,7 @@ import { Plus, Edit, Trash2 } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
 
 export default function Menu() {
-  const { restaurantId, user } = useAuth();
+  const { restaurantId, user, loading: authLoading } = useAuth();
   const [items, setItems] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -39,8 +38,10 @@ export default function Menu() {
   const { toast } = useToast();
 
   useEffect(() => {
-    if (!restaurantId) return;
+    if (authLoading) return;
+    if (!restaurantId) { setLoading(false); return; }
 
+    setLoading(true);
     const q = query(
       collection(db, `menus/${restaurantId}/items`),
       where("isDeleted", "==", false),
@@ -50,18 +51,17 @@ export default function Menu() {
     const unsubscribe = onSnapshot(
       q,
       (snapshot) => {
-        const data = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
-        setItems(data);
+        setItems(snapshot.docs.map(d => ({ id: d.id, ...d.data() })));
         setLoading(false);
       },
-      async (error) => {
+      (error) => {
         console.error("[Menu] listener error:", error);
-        if (isPermissionDenied(error)) await secureLogout();
+        setLoading(false);
       }
     );
 
     return () => unsubscribe();
-  }, [restaurantId]);
+  }, [restaurantId, authLoading]);
 
   const resetForm = () => {
     setName(""); setPrice(""); setCategory("Starters");

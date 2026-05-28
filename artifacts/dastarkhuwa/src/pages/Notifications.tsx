@@ -10,23 +10,36 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 
 export default function Notifications() {
-  const { restaurantId } = useAuth();
+  const { restaurantId, loading: authLoading } = useAuth();
   const [notifications, setNotifications] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    if (!restaurantId) return;
+    if (authLoading) return;
+    if (!restaurantId) { setLoading(false); return; }
 
+    setLoading(true);
     const q = query(collection(db, `notifications/${restaurantId}/alerts`));
 
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const data = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
-      setNotifications(data.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()));
-      setLoading(false);
-    });
+    const unsubscribe = onSnapshot(
+      q,
+      (snapshot) => {
+        const data = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
+        setNotifications(data.sort((a, b) => {
+          const aTime = a.createdAt?.toMillis?.() ?? new Date(a.createdAt).getTime();
+          const bTime = b.createdAt?.toMillis?.() ?? new Date(b.createdAt).getTime();
+          return bTime - aTime;
+        }));
+        setLoading(false);
+      },
+      (error) => {
+        console.error("[Notifications] listener error:", error);
+        setLoading(false);
+      }
+    );
 
     return () => unsubscribe();
-  }, [restaurantId]);
+  }, [restaurantId, authLoading]);
 
   const markAsRead = async (id: string) => {
     try {

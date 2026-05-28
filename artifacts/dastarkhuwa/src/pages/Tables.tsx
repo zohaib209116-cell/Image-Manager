@@ -2,8 +2,7 @@ import { useState, useEffect } from "react";
 import { useAuth } from "@/hooks/useAuth";
 import { db } from "@/lib/firebase";
 import { collection, query, where, onSnapshot, addDoc, updateDoc, doc, serverTimestamp, limit } from "firebase/firestore";
-import { sanitizeStr, sanitizeNum, isValidTableStatus, isValidTableLocation, safeErrorMessage, isPermissionDenied } from "@/lib/security";
-import { secureLogout } from "@/lib/auth";
+import { sanitizeStr, sanitizeNum, isValidTableStatus, isValidTableLocation, safeErrorMessage } from "@/lib/security";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -17,7 +16,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 
 export default function Tables() {
-  const { restaurantId, user } = useAuth();
+  const { restaurantId, user, loading: authLoading } = useAuth();
   const [tables, setTables] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -33,8 +32,10 @@ export default function Tables() {
   const { toast } = useToast();
 
   useEffect(() => {
-    if (!restaurantId) return;
+    if (authLoading) return;
+    if (!restaurantId) { setLoading(false); return; }
 
+    setLoading(true);
     const q = query(
       collection(db, `tables/${restaurantId}/slots`),
       where("isDeleted", "==", false),
@@ -50,14 +51,14 @@ export default function Tables() {
         ));
         setLoading(false);
       },
-      async (error) => {
+      (error) => {
         console.error("[Tables] listener error:", error);
-        if (isPermissionDenied(error)) await secureLogout();
+        setLoading(false);
       }
     );
 
     return () => unsubscribe();
-  }, [restaurantId]);
+  }, [restaurantId, authLoading]);
 
   const resetForm = () => {
     setTableNumber(""); setCapacity(""); setLocation("indoor");
