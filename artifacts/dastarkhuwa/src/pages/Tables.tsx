@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { useAuth } from "@/hooks/useAuth";
-import { db } from "@/lib/firebase";
+import { auth, db } from "@/lib/firebase";
 import { collection, query, where, onSnapshot, addDoc, updateDoc, doc, serverTimestamp, limit } from "firebase/firestore";
 import { sanitizeStr, sanitizeNum, isValidTableStatus, isValidTableLocation, safeErrorMessage } from "@/lib/security";
 import { Card, CardContent } from "@/components/ui/card";
@@ -16,7 +16,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 
 export default function Tables() {
-  const { restaurantId, user, loading: authLoading } = useAuth();
+  const { restaurantId, loading: authLoading } = useAuth();
   const [tables, setTables] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -118,9 +118,11 @@ export default function Tables() {
         await updateDoc(doc(db, `tables/${restaurantId}/slots`, editingTable.id), baseData);
         toast({ title: "Table Updated", description: "Table has been updated successfully." });
       } else {
+        const uid = auth.currentUser?.uid;
+        if (!uid) throw new Error("Not authenticated — cannot write ownerId");
         await addDoc(collection(db, `tables/${restaurantId}/slots`), {
           ...baseData,
-          ownerId: user?.uid ?? "",
+          ownerId: uid,
           isDeleted: false,
           createdAt: serverTimestamp(),
         });

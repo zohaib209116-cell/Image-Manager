@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { useAuth } from "@/hooks/useAuth";
-import { db } from "@/lib/firebase";
+import { auth, db } from "@/lib/firebase";
 import { collection, query, where, onSnapshot, addDoc, updateDoc, doc, serverTimestamp, limit } from "firebase/firestore";
 import { sanitizeStr, sanitizeNum, isValidMenuCategory, safeErrorMessage } from "@/lib/security";
 import { Card, CardContent } from "@/components/ui/card";
@@ -20,7 +20,7 @@ import { Plus, Edit, Trash2 } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
 
 export default function Menu() {
-  const { restaurantId, user, loading: authLoading } = useAuth();
+  const { restaurantId, loading: authLoading } = useAuth();
   const [items, setItems] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -122,9 +122,11 @@ export default function Menu() {
         await updateDoc(doc(db, `menus/${restaurantId}/items`, editingItem.id), baseData);
         toast({ title: "Item Updated", description: "Menu item has been updated successfully." });
       } else {
+        const uid = auth.currentUser?.uid;
+        if (!uid) throw new Error("Not authenticated — cannot write ownerId");
         await addDoc(collection(db, `menus/${restaurantId}/items`), {
           ...baseData,
-          ownerId: user?.uid ?? "",
+          ownerId: uid,
           isDeleted: false,
           createdAt: serverTimestamp(),
         });

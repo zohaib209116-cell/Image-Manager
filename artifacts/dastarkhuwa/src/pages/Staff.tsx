@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { useAuth } from "@/hooks/useAuth";
-import { db } from "@/lib/firebase";
+import { auth, db } from "@/lib/firebase";
 import { collection, query, where, onSnapshot, addDoc, updateDoc, doc, serverTimestamp, limit } from "firebase/firestore";
 import { sanitizeStr, isValidStaffRole, safeErrorMessage } from "@/lib/security";
 import { Card, CardContent } from "@/components/ui/card";
@@ -17,7 +17,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 
 export default function Staff() {
-  const { restaurantId, user, loading: authLoading } = useAuth();
+  const { restaurantId, loading: authLoading } = useAuth();
   const [staff, setStaff] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -106,9 +106,11 @@ export default function Staff() {
         await updateDoc(doc(db, `staff/${restaurantId}/members`, editingStaff.id), baseData);
         toast({ title: "Staff Updated", description: "Staff member has been updated." });
       } else {
+        const uid = auth.currentUser?.uid;
+        if (!uid) throw new Error("Not authenticated — cannot write ownerId");
         await addDoc(collection(db, `staff/${restaurantId}/members`), {
           ...baseData,
-          ownerId: user?.uid ?? "",
+          ownerId: uid,
           isDeleted: false,
           createdAt: serverTimestamp(),
         });
