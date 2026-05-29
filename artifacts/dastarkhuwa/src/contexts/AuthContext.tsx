@@ -6,8 +6,13 @@ import { secureLogout } from "@/lib/auth";
 import { useToast } from "@/hooks/use-toast";
 import { AuthContext, type RestaurantData, type RestaurantDoc } from "@/contexts/authContextDef";
 
-// ── localStorage key ────────────────────────────────────────────────────────
-const STORAGE_KEY = "dastarkhuwa_active_restaurant";
+// ── Storage keys ────────────────────────────────────────────────────────────
+// Single-restaurant owners: localStorage so auto-select survives browser restarts.
+// Multi-restaurant owners: sessionStorage so the picker is shown on every new
+// login session — within-tab navigation won't re-prompt, but a new tab or
+// browser restart will always ask the owner to pick explicitly.
+const SINGLE_KEY = "dastarkhuwa_restaurant";
+const MULTI_KEY  = "dastarkhuwa_session_restaurant";
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -117,28 +122,32 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           setUser(null);
           setRestaurants([]);
           setActiveQueryId(null);
-          localStorage.removeItem(STORAGE_KEY);
+          localStorage.removeItem(SINGLE_KEY);
         } else {
           setUser(currentUser);
           setRestaurants(found);
 
           if (found.length === 1) {
-            // Single restaurant — auto-select, no picker needed
+            // Single restaurant — auto-select, persist across browser sessions
             const id = found[0].queryId;
             setActiveQueryId(id);
-            localStorage.setItem(STORAGE_KEY, id);
+            localStorage.setItem(SINGLE_KEY, id);
+            sessionStorage.removeItem(MULTI_KEY);
             console.log("[Auth] Auto-selected (single restaurant):", id);
           } else {
-            // Multiple restaurants — restore saved choice or require selection
-            const stored = localStorage.getItem(STORAGE_KEY);
-            const valid = stored ? found.find(r => r.queryId === stored) : null;
+            // Multiple restaurants:
+            // - Clear any stale single-restaurant localStorage entry
+            // - Check sessionStorage for a within-session choice
+            // - If nothing found → show the picker (do NOT auto-select)
+            localStorage.removeItem(SINGLE_KEY);
+            const session = sessionStorage.getItem(MULTI_KEY);
+            const valid = session ? found.find(r => r.queryId === session) : null;
             if (valid) {
               setActiveQueryId(valid.queryId);
-              console.log("[Auth] Restored restaurant from localStorage:", valid.queryId);
+              console.log("[Auth] Restored restaurant from session:", valid.queryId);
             } else {
               setActiveQueryId(null);
-              localStorage.removeItem(STORAGE_KEY);
-              console.log("[Auth] Multiple restaurants — awaiting user selection");
+              console.log("[Auth] Multiple restaurants — showing picker");
             }
           }
         }
@@ -147,7 +156,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setUser(null);
         setRestaurants([]);
         setActiveQueryId(null);
-        localStorage.removeItem(STORAGE_KEY);
+        localStorage.removeItem(SINGLE_KEY);
+        sessionStorage.removeItem(MULTI_KEY);
       }
 
       setLoading(false);
@@ -163,7 +173,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         return prev;
       }
       setActiveQueryId(queryId);
-      localStorage.setItem(STORAGE_KEY, queryId);
+      // Single-restaurant owners → localStorage; multi → sessionStorage
+      if (prev.length === 1) {
+        localStorage.setItem(SINGLE_KEY, queryId);
+      } else {
+        sessionStorage.setItem(MULTI_KEY, queryId);
+      }
       console.log("[Auth] Active restaurant switched to:", queryId);
       return prev;
     });

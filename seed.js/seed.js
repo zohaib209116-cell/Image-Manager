@@ -31,7 +31,7 @@ async function seed() {
   // ---------------- RESTAURANT ----------------
   await db.collection("restaurants").doc(restaurantId).set({
     ownerId,
-    name: "demo_restaurant_1",
+    name: "demo_restaurant",
     description: "Sample restaurant for testing dashboard",
     location: "Faisalabad",
     images: [],
