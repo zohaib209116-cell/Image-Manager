@@ -77,7 +77,8 @@ export function Layout({ children }: { children: React.ReactNode }) {
     if (!restaurantId) return;
 
     const q = query(
-      collection(db, `notifications/${restaurantId}/alerts`),
+      collection(db, "notifications"),
+      where("restaurantId", "==", restaurantId),
       where("read", "==", false),
       orderBy("createdAt", "desc"),
       limit(50)

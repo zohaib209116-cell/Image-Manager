@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { useAuth } from "@/hooks/useAuth";
 import { db } from "@/lib/firebase";
-import { collection, query, onSnapshot, doc, updateDoc, writeBatch } from "firebase/firestore";
+import { collection, query, where, orderBy, onSnapshot, doc, updateDoc, writeBatch } from "firebase/firestore";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { formatKarachiTime } from "@/lib/utils";
@@ -19,7 +19,11 @@ export default function Notifications() {
     if (!restaurantId) { setLoading(false); return; }
 
     setLoading(true);
-    const q = query(collection(db, `notifications/${restaurantId}/alerts`));
+    const q = query(
+      collection(db, "notifications"),
+      where("restaurantId", "==", restaurantId),
+      orderBy("createdAt", "desc")
+    );
 
     const unsubscribe = onSnapshot(
       q,
@@ -43,7 +47,7 @@ export default function Notifications() {
 
   const markAsRead = async (id: string) => {
     try {
-      await updateDoc(doc(db, `notifications/${restaurantId}/alerts`, id), { read: true });
+      await updateDoc(doc(db, "notifications", id), { read: true });
     } catch (error) {
       console.error(error);
     }
@@ -52,7 +56,7 @@ export default function Notifications() {
   const markAllAsRead = async () => {
     const batch = writeBatch(db);
     notifications.filter(n => !n.read).forEach(n => {
-      const ref = doc(db, `notifications/${restaurantId}/alerts`, n.id);
+      const ref = doc(db, "notifications", n.id);
       batch.update(ref, { read: true });
     });
     try {
