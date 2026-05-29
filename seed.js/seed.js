@@ -1,36 +1,37 @@
-{
-  "extends": "../tsconfig.base.json",
-  "compilerOptions": {
-    "outDir": "dist",
-    "rootDir": "src",
-    "types": ["node"]
-  },
-  "include": ["src"]
-}
-Bconst admin = require("firebase-admin");
+const admin = require("firebase-admin");
 
-// ---------------- FIREBASE INIT (USES REPLIT SECRETS) ----------------
+// ---------------- LOAD FIREBASE FROM REPLIT SECRETS ----------------
+const raw = process.env.FIREBASE_SERVICE_ACCOUNT;
+
+if (!raw) {
+  throw new Error("Missing FIREBASE_SERVICE_ACCOUNT in Replit Secrets");
+}
+
+if (raw.includes("Paste full")) {
+  throw new Error("Firebase secret not configured properly");
+}
+
+const serviceAccount = JSON.parse(raw);
+
+// Initialize Firebase ONCE
 admin.initializeApp({
-  credential: admin.credential.cert({
-    projectId: process.env.FIREBASE_PROJECT_ID,
-    clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
-    privateKey: process.env.FIREBASE_PRIVATE_KEY.replace(/\\n/g, '\n'),
-  }),
+  credential: admin.credential.cert(serviceAccount),
 });
 
 const db = admin.firestore();
 
 // ---------------- CONFIG ----------------
 const restaurantId = "demo_restaurant_1";
-const ownerId = "iOdkITeq2laJg0Lx0QADe2pHw682"; // 🔴 replace this
+const ownerId = "YiOdkITeq2laJg0Lx0QADe2pHw682"; // your UID
 
+// ---------------- SEED FUNCTION ----------------
 async function seed() {
-  console.log("Seeding started... 🚀");
+  console.log("🚀 Seeding started...");
 
   // ---------------- RESTAURANT ----------------
   await db.collection("restaurants").doc(restaurantId).set({
     ownerId,
-    name: "Demo Restaurant",
+    name: "demo_restaurant_1",
     description: "Sample restaurant for testing dashboard",
     location: "Faisalabad",
     images: [],
@@ -41,9 +42,8 @@ async function seed() {
   // ---------------- MENUS ----------------
   const menus = [
     { name: "Chicken Burger", category: "Fast Food", price: 450 },
-    { name: "Zinger Burger", category: "Fast Food", price: 550 },
+    { name: "Zinger Burger", category: "Fast Food", price: 600 },
     { name: "Fries", category: "Sides", price: 200 },
-    { name: "Pizza", category: "Fast Food", price: 1200 },
   ];
 
   for (const item of menus) {
@@ -63,7 +63,6 @@ async function seed() {
     { tableNumber: 1, capacity: 2 },
     { tableNumber: 2, capacity: 4 },
     { tableNumber: 3, capacity: 6 },
-    { tableNumber: 4, capacity: 8 },
   ];
 
   for (const table of tables) {
@@ -82,7 +81,6 @@ async function seed() {
   const staff = [
     { name: "Ali", role: "Waiter" },
     { name: "Ahmed", role: "Chef" },
-    { name: "Hassan", role: "Manager" },
   ];
 
   for (const s of staff) {
@@ -94,9 +92,9 @@ async function seed() {
     });
   }
 
-  console.log("Seeding completed successfully 🎉");
+  console.log("✅ Seeding completed successfully!");
 }
 
 seed().catch((err) => {
-  console.error("Seeding failed ❌", err);
+  console.error("❌ Seeding failed:", err);
 });

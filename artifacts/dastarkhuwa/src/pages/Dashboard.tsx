@@ -4,8 +4,6 @@ import { useAuth } from "@/hooks/useAuth";
 import { db } from "@/lib/firebase";
 import { collection, query, where, onSnapshot, limit } from "firebase/firestore";
 import { formatPKR, formatKarachiTime } from "@/lib/utils";
-import { isPermissionDenied } from "@/lib/security";
-import { secureLogout } from "@/lib/auth";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -22,12 +20,16 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 
 export default function Dashboard() {
-  const { restaurantData, restaurantId } = useAuth();
+  const { restaurantData, restaurantId, loading: authLoading } = useAuth();
   const [bookings, setBookings] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    if (!restaurantId) return;
+    if (authLoading) return;
+    if (!restaurantId) { setLoading(false); return; }
+
+    console.log("[Dashboard] Setting up bookings listener | restaurantId:", restaurantId);
+    setLoading(true);
 
     const q = query(
       collection(db, "bookings"),
@@ -39,18 +41,19 @@ export default function Dashboard() {
     const unsubscribe = onSnapshot(
       q,
       (snapshot) => {
+        console.log("[Dashboard] Bookings received:", snapshot.docs.length);
         const data = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
         setBookings(data);
         setLoading(false);
       },
-      async (error) => {
-        console.error("[Dashboard] listener error:", error);
-        if (isPermissionDenied(error)) await secureLogout();
+      (error) => {
+        console.error("[Dashboard] listener error:", error.code, error.message);
+        setLoading(false);
       }
     );
 
     return () => unsubscribe();
-  }, [restaurantId]);
+  }, [restaurantId, authLoading]);
 
   const today = new Date();
   today.setHours(0, 0, 0, 0);
@@ -69,10 +72,14 @@ export default function Dashboard() {
     .filter(b => b.status === "completed")
     .reduce((acc, curr) => acc + (curr.totalAmount || 0), 0);
   const recentBookings = [...bookings]
-    .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+    .sort((a, b) => {
+      const aTime = a.createdAt?.toMillis?.() ?? new Date(a.createdAt).getTime();
+      const bTime = b.createdAt?.toMillis?.() ?? new Date(b.createdAt).getTime();
+      return bTime - aTime;
+    })
     .slice(0, 5);
 
-  if (loading) {
+  if (authLoading || loading) {
     return (
       <div className="space-y-6">
         <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">

@@ -11,8 +11,28 @@ interface RestaurantResult {
   data: RestaurantData;
 }
 
+/**
+ * Resolve the effective restaurantId for subcollection queries.
+ *
+ * Priority order:
+ *   1. document.data.restaurantId  — explicit field set by seed scripts
+ *   2. document.id                 — Firestore auto-generated doc ID
+ *
+ * This handles the common mismatch where seeded data uses a human-readable
+ * ID like "demo_restaurant_1" stored as a field inside the document, while
+ * the Firestore document itself was assigned an auto-generated key.
+ */
+function effectiveId(docId: string, data: RestaurantData): string {
+  const fieldId = data.restaurantId as string | undefined;
+  const resolved = fieldId?.trim() || docId;
+  if (fieldId && fieldId !== docId) {
+    console.log("[Auth] restaurantId field override:", fieldId, "(doc key:", docId, ")");
+  }
+  return resolved;
+}
+
 async function findRestaurant(user: User): Promise<RestaurantResult | null> {
-  // Method 1: Query by ownerId field (primary — matches Firestore security rules)
+  // ── Method 1: Query by ownerId field ─────────────────────────────────────
   try {
     const q = query(
       collection(db, "restaurants"),
@@ -22,27 +42,39 @@ async function findRestaurant(user: User): Promise<RestaurantResult | null> {
     const snapshot = await getDocs(q);
     if (!snapshot.empty) {
       const d = snapshot.docs[0];
-      return { id: d.id, data: d.data() as RestaurantData };
+      const data = d.data() as RestaurantData;
+      const id = effectiveId(d.id, data);
+      console.log("[Auth] restaurantId resolved via ownerId query →", id);
+      return { id, data };
     }
   } catch (e) {
     console.log("[Auth] ownerId query failed:", e);
   }
 
-  // Method 2: Document ID == user UID
+  // ── Method 2: Document ID == user UID ────────────────────────────────────
   try {
     const docSnap = await getDoc(doc(db, "restaurants", user.uid));
     if (docSnap.exists()) {
-      return { id: docSnap.id, data: docSnap.data() as RestaurantData };
+      const data = docSnap.data() as RestaurantData;
+      const id = effectiveId(docSnap.id, data);
+      console.log("[Auth] restaurantId resolved via doc ID →", id);
+      return { id, data };
     }
   } catch (e) {
     console.log("[Auth] doc ID lookup failed:", e);
   }
 
-  // Method 3: Full scan fallback (debug only)
+  // ── Method 3: Full scan (logs every doc for debugging) ───────────────────
   try {
     const allSnap = await getDocs(collection(db, "restaurants"));
+    console.log("[Auth] Full scan —", allSnap.docs.length, "restaurant(s) found:");
     allSnap.docs.forEach(d => {
-      console.log("[Auth] restaurant:", d.id, "| ownerId:", d.data().ownerId, "| match:", d.data().ownerId === user.uid);
+      console.log(
+        "  doc:", d.id,
+        "| ownerId:", d.data().ownerId,
+        "| restaurantId field:", d.data().restaurantId ?? "(none)",
+        "| ownerId match:", d.data().ownerId === user.uid
+      );
     });
     const match = allSnap.docs.find(d =>
       d.data().ownerId === user.uid ||
@@ -50,12 +82,16 @@ async function findRestaurant(user: User): Promise<RestaurantResult | null> {
       d.id === user.uid
     );
     if (match) {
-      return { id: match.id, data: match.data() as RestaurantData };
+      const data = match.data() as RestaurantData;
+      const id = effectiveId(match.id, data);
+      console.log("[Auth] restaurantId resolved via full scan →", id);
+      return { id, data };
     }
   } catch (e) {
     console.log("[Auth] full scan failed:", e);
   }
 
+  console.warn("[Auth] No restaurant found for UID:", user.uid);
   return null;
 }
 
@@ -76,6 +112,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           setUser(currentUser);
           setRestaurantId(result.id);
           setRestaurantData(result.data);
+          console.log("[Auth] Context ready | restaurantId:", result.id);
         } else {
           toast({
             title: "Access Denied",
