@@ -14,12 +14,19 @@ import {
   LogOut,
   Menu,
   X,
+  ChevronDown,
 } from "lucide-react";
 import { collection, query, where, onSnapshot, orderBy, limit } from "firebase/firestore";
 import { db } from "@/lib/firebase";
-import { secureLogout } from "@/lib/auth";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { useToast } from "@/hooks/use-toast";
 import { useBookingAlert } from "@/hooks/useBookingAlert";
 
@@ -39,7 +46,7 @@ const INACTIVITY_TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes
 
 export function Layout({ children }: { children: React.ReactNode }) {
   const [location] = useLocation();
-  const { logout, restaurantData, restaurantId } = useAuth();
+  const { logout, restaurantData, restaurantId, restaurants, setActiveRestaurant } = useAuth();
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [unreadCount, setUnreadCount] = useState(0);
   const [newBookingPulse, setNewBookingPulse] = useState(false);
@@ -78,12 +85,8 @@ export function Layout({ children }: { children: React.ReactNode }) {
 
     const unsubscribe = onSnapshot(
       q,
-      (snap) => {
-        setUnreadCount(snap.docs.length);
-      },
-      (err) => {
-        console.error("[Notifications] Listener error:", err);
-      }
+      (snap) => { setUnreadCount(snap.docs.length); },
+      (err) => { console.error("[Notifications] Listener error:", err.code); }
     );
 
     return () => unsubscribe();
@@ -115,6 +118,8 @@ export function Layout({ children }: { children: React.ReactNode }) {
     const item = NAV_ITEMS.find((i) => i.href === location);
     return item ? item.label : "Dashboard";
   };
+
+  const hasMultiple = restaurants.length > 1;
 
   return (
     <div className="flex min-h-screen w-full flex-col bg-background md:flex-row">
@@ -186,16 +191,61 @@ export function Layout({ children }: { children: React.ReactNode }) {
           </ul>
         </nav>
 
-        <div className="border-t border-sidebar-border p-4">
-          <Button
-            variant="ghost"
-            className="w-full justify-start gap-3 text-sidebar-foreground/70 hover:bg-destructive/20 hover:text-destructive"
-            onClick={handleLogout}
-            data-testid="button-logout"
-          >
-            <LogOut className="h-5 w-5" />
-            Sign out
-          </Button>
+        <div className="border-t border-sidebar-border p-4 space-y-2">
+          {/* Restaurant switcher — only shown when user owns multiple */}
+          {hasMultiple && (
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  variant="ghost"
+                  className="w-full justify-between gap-2 text-sidebar-foreground/70 hover:bg-sidebar-accent/50 hover:text-sidebar-foreground text-sm"
+                >
+                  <span className="flex items-center gap-2 truncate">
+                    <Store className="h-4 w-4 shrink-0" />
+                    <span className="truncate">{restaurantData?.name || "Switch Restaurant"}</span>
+                  </span>
+                  <ChevronDown className="h-4 w-4 shrink-0 opacity-50" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="start" className="w-56">
+                {restaurants.map((r) => (
+                  <DropdownMenuItem
+                    key={r.queryId}
+                    onClick={() => setActiveRestaurant(r.queryId)}
+                    className={cn(
+                      "cursor-pointer",
+                      r.queryId === restaurantId && "font-semibold text-primary"
+                    )}
+                  >
+                    {r.data.name || r.queryId}
+                    {r.queryId === restaurantId && (
+                      <span className="ml-auto text-xs text-primary">Active</span>
+                    )}
+                  </DropdownMenuItem>
+                ))}
+                <DropdownMenuSeparator />
+                <DropdownMenuItem
+                  className="text-muted-foreground"
+                  onClick={handleLogout}
+                >
+                  <LogOut className="h-4 w-4 mr-2" /> Sign out
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          )}
+
+          {/* Single-restaurant sign-out button */}
+          {!hasMultiple && (
+            <Button
+              variant="ghost"
+              className="w-full justify-start gap-3 text-sidebar-foreground/70 hover:bg-destructive/20 hover:text-destructive"
+              onClick={handleLogout}
+              data-testid="button-logout"
+            >
+              <LogOut className="h-5 w-5" />
+              Sign out
+            </Button>
+          )}
         </div>
       </aside>
 
@@ -210,7 +260,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
           </div>
         </header>
 
-        <div className="flex-1 overflow-y-auto p-4 md:p-8">
+        <div className="flex-1 overflow-y-auto p-4 md:p8">
           <div className="mx-auto max-w-6xl">{children}</div>
         </div>
       </main>

@@ -1,69 +1,49 @@
 import { useState } from "react";
-import { useLocation } from "wouter";
-import { signInWithEmailAndPassword, getAuth } from "firebase/auth";
-import { getDocs, getDoc, collection, query, where, doc } from "firebase/firestore";
-import { auth, db } from "@/lib/firebase";
+import { useAuth } from "@/hooks/useAuth";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
 import { Loader2 } from "lucide-react";
 
-async function restaurantExists(uid: string): Promise<boolean> {
-  // Method 1: ownerId field
-  try {
-    const snap = await getDocs(query(collection(db, "restaurants"), where("ownerId", "==", uid)));
-    if (!snap.empty) return true;
-  } catch (_) {}
-
-  // Method 2: doc ID == uid
-  try {
-    const snap = await getDoc(doc(db, "restaurants", uid));
-    if (snap.exists()) return true;
-  } catch (_) {}
-
-  // Method 3: full scan
-  try {
-    const all = await getDocs(collection(db, "restaurants"));
-    const found = all.docs.some(d => d.data().ownerId === uid || d.id === uid);
-    if (found) return true;
-  } catch (_) {}
-
-  return false;
-}
-
+/**
+ * Login page.
+ *
+ * Delegates ALL restaurant lookup and access-denied logic to AuthContext —
+ * no duplicate Firestore queries here. After signInWithEmailAndPassword
+ * resolves, onAuthStateChanged in AuthContext will:
+ *   • load the user's restaurants
+ *   • auto-select if there is exactly one
+ *   • set needsRestaurantSelection = true if there are multiple
+ *   • call secureLogout + show toast if there are none
+ *
+ * ProtectedRoute handles the redirect / selector gating.
+ */
 export default function Login() {
+  const { login } = useAuth();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
-  const [, setLocation] = useLocation();
   const { toast } = useToast();
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (loading) return;
     setLoading(true);
     try {
-      const credential = await signInWithEmailAndPassword(auth, email, password);
-      const uid = credential.user.uid;
-      console.log("[Login] Signed in UID:", uid);
-
-      const found = await restaurantExists(uid);
-      if (!found) {
-        await auth.signOut();
-        toast({
-          title: "Access Denied",
-          description: "No restaurant profile found for this account.",
-          variant: "destructive",
-        });
-        return;
-      }
-      setLocation("/");
+      await login(email, password);
+      // Navigation is handled by ProtectedRoute reacting to auth state change.
     } catch (error: any) {
-      toast({
-        title: "Login Failed",
-        description: error.message || "Invalid email or password.",
-        variant: "destructive",
-      });
+      const code = error?.code as string | undefined;
+      const message =
+        code === "auth/invalid-credential" || code === "auth/wrong-password"
+          ? "Incorrect email or password."
+          : code === "auth/user-not-found"
+          ? "No account found with this email."
+          : code === "auth/too-many-requests"
+          ? "Too many attempts. Please wait a moment and try again."
+          : "Sign in failed. Please try again.";
+      toast({ title: "Login Failed", description: message, variant: "destructive" });
     } finally {
       setLoading(false);
     }

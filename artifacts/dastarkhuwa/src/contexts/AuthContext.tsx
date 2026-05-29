@@ -1,119 +1,113 @@
-import { useEffect, useState, ReactNode } from "react";
+import { useEffect, useState, useCallback, ReactNode } from "react";
 import { User, signInWithEmailAndPassword, onAuthStateChanged } from "firebase/auth";
-import { doc, getDoc, getDocs, collection, query, where, limit } from "firebase/firestore";
+import { doc, getDoc, getDocs, collection, query, where } from "firebase/firestore";
 import { auth, db } from "@/lib/firebase";
 import { secureLogout } from "@/lib/auth";
 import { useToast } from "@/hooks/use-toast";
-import { AuthContext, type RestaurantData } from "@/contexts/authContextDef";
+import { AuthContext, type RestaurantData, type RestaurantDoc } from "@/contexts/authContextDef";
 
-interface RestaurantResult {
-  id: string;
-  data: RestaurantData;
+// ── localStorage key ────────────────────────────────────────────────────────
+const STORAGE_KEY = "dastarkhuwa_active_restaurant";
+
+// ── Helpers ─────────────────────────────────────────────────────────────────
+
+/**
+ * Compute the effective subcollection path key for a restaurant document.
+ * Seed scripts often store `restaurantId: "demo_restaurant_1"` inside the
+ * document body; if present we honour it, otherwise we use the doc key.
+ */
+function resolveQueryId(docId: string, data: RestaurantData): string {
+  const fieldId = (data.restaurantId as string | undefined)?.trim();
+  if (fieldId && fieldId !== docId) {
+    console.log("[Auth] queryId override from data.restaurantId:", fieldId, "(doc key:", docId + ")");
+  }
+  return fieldId || docId;
 }
 
 /**
- * Resolve the effective restaurantId for subcollection queries.
- *
- * Priority order:
- *   1. document.data.restaurantId  — explicit field set by seed scripts
- *   2. document.id                 — Firestore auto-generated doc ID
- *
- * This handles the common mismatch where seeded data uses a human-readable
- * ID like "demo_restaurant_1" stored as a field inside the document, while
- * the Firestore document itself was assigned an auto-generated key.
+ * Load every restaurant owned by this user.
+ * Tries three methods in order so the app works regardless of how the
+ * restaurant document was created.
  */
-function effectiveId(docId: string, data: RestaurantData): string {
-  const fieldId = data.restaurantId as string | undefined;
-  const resolved = fieldId?.trim() || docId;
-  if (fieldId && fieldId !== docId) {
-    console.log("[Auth] restaurantId field override:", fieldId, "(doc key:", docId, ")");
+async function loadOwnerRestaurants(user: User): Promise<RestaurantDoc[]> {
+  const seen = new Set<string>();
+  const results: RestaurantDoc[] = [];
+
+  const add = (docId: string, data: RestaurantData) => {
+    if (seen.has(docId)) return;
+    seen.add(docId);
+    results.push({ id: docId, queryId: resolveQueryId(docId, data), data });
+  };
+
+  // Method 1 — ownerId field query (fast, covers most real documents)
+  try {
+    const q = query(collection(db, "restaurants"), where("ownerId", "==", user.uid));
+    const snap = await getDocs(q);
+    snap.docs.forEach(d => add(d.id, d.data() as RestaurantData));
+    console.log("[Auth] Method 1 (ownerId query) →", snap.docs.length, "doc(s)");
+  } catch (e) {
+    console.warn("[Auth] Method 1 failed:", e);
   }
-  return resolved;
+
+  // Method 2 — document key == user UID (legacy pattern)
+  if (results.length === 0) {
+    try {
+      const docSnap = await getDoc(doc(db, "restaurants", user.uid));
+      if (docSnap.exists()) {
+        add(docSnap.id, docSnap.data() as RestaurantData);
+        console.log("[Auth] Method 2 (doc key == uid) found restaurant");
+      }
+    } catch (e) {
+      console.warn("[Auth] Method 2 failed:", e);
+    }
+  }
+
+  // Method 3 — full collection scan (last resort; logs every doc for debugging)
+  if (results.length === 0) {
+    try {
+      const allSnap = await getDocs(collection(db, "restaurants"));
+      console.log("[Auth] Method 3 full scan —", allSnap.docs.length, "total restaurant(s):");
+      allSnap.docs.forEach(d => {
+        const data = d.data();
+        const match = data.ownerId === user.uid || data.ownerId === user.uid.trim() || d.id === user.uid;
+        console.log(
+          "  doc:", d.id,
+          "| ownerId:", data.ownerId ?? "(none)",
+          "| restaurantId field:", data.restaurantId ?? "(none)",
+          "| match:", match
+        );
+        if (match) add(d.id, data as RestaurantData);
+      });
+    } catch (e) {
+      console.warn("[Auth] Method 3 failed:", e);
+    }
+  }
+
+  console.log(
+    "[Auth] Restaurants for", user.uid, "→",
+    results.map(r => `${r.id} (queryId: ${r.queryId})`).join(", ") || "none"
+  );
+  return results;
 }
 
-async function findRestaurant(user: User): Promise<RestaurantResult | null> {
-  // ── Method 1: Query by ownerId field ─────────────────────────────────────
-  try {
-    const q = query(
-      collection(db, "restaurants"),
-      where("ownerId", "==", user.uid),
-      limit(1)
-    );
-    const snapshot = await getDocs(q);
-    if (!snapshot.empty) {
-      const d = snapshot.docs[0];
-      const data = d.data() as RestaurantData;
-      const id = effectiveId(d.id, data);
-      console.log("[Auth] restaurantId resolved via ownerId query →", id);
-      return { id, data };
-    }
-  } catch (e) {
-    console.log("[Auth] ownerId query failed:", e);
-  }
-
-  // ── Method 2: Document ID == user UID ────────────────────────────────────
-  try {
-    const docSnap = await getDoc(doc(db, "restaurants", user.uid));
-    if (docSnap.exists()) {
-      const data = docSnap.data() as RestaurantData;
-      const id = effectiveId(docSnap.id, data);
-      console.log("[Auth] restaurantId resolved via doc ID →", id);
-      return { id, data };
-    }
-  } catch (e) {
-    console.log("[Auth] doc ID lookup failed:", e);
-  }
-
-  // ── Method 3: Full scan (logs every doc for debugging) ───────────────────
-  try {
-    const allSnap = await getDocs(collection(db, "restaurants"));
-    console.log("[Auth] Full scan —", allSnap.docs.length, "restaurant(s) found:");
-    allSnap.docs.forEach(d => {
-      console.log(
-        "  doc:", d.id,
-        "| ownerId:", d.data().ownerId,
-        "| restaurantId field:", d.data().restaurantId ?? "(none)",
-        "| ownerId match:", d.data().ownerId === user.uid
-      );
-    });
-    const match = allSnap.docs.find(d =>
-      d.data().ownerId === user.uid ||
-      d.data().ownerId === user.uid.trim() ||
-      d.id === user.uid
-    );
-    if (match) {
-      const data = match.data() as RestaurantData;
-      const id = effectiveId(match.id, data);
-      console.log("[Auth] restaurantId resolved via full scan →", id);
-      return { id, data };
-    }
-  } catch (e) {
-    console.log("[Auth] full scan failed:", e);
-  }
-
-  console.warn("[Auth] No restaurant found for UID:", user.uid);
-  return null;
-}
+// ── Provider ────────────────────────────────────────────────────────────────
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
-  const [restaurantId, setRestaurantId] = useState<string | null>(null);
-  const [restaurantData, setRestaurantData] = useState<RestaurantData | null>(null);
+  const [restaurants, setRestaurants] = useState<RestaurantDoc[]>([]);
+  const [activeQueryId, setActiveQueryId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const { toast } = useToast();
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
       setLoading(true);
+
       if (currentUser) {
         console.log("[Auth] UID:", currentUser.uid);
-        const result = await findRestaurant(currentUser);
-        if (result) {
-          setUser(currentUser);
-          setRestaurantId(result.id);
-          setRestaurantData(result.data);
-          console.log("[Auth] Context ready | restaurantId:", result.id);
-        } else {
+        const found = await loadOwnerRestaurants(currentUser);
+
+        if (found.length === 0) {
           toast({
             title: "Access Denied",
             description: "No restaurant profile found for this account.",
@@ -121,29 +115,86 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           });
           await secureLogout();
           setUser(null);
-          setRestaurantId(null);
-          setRestaurantData(null);
+          setRestaurants([]);
+          setActiveQueryId(null);
+          localStorage.removeItem(STORAGE_KEY);
+        } else {
+          setUser(currentUser);
+          setRestaurants(found);
+
+          if (found.length === 1) {
+            // Single restaurant — auto-select, no picker needed
+            const id = found[0].queryId;
+            setActiveQueryId(id);
+            localStorage.setItem(STORAGE_KEY, id);
+            console.log("[Auth] Auto-selected (single restaurant):", id);
+          } else {
+            // Multiple restaurants — restore saved choice or require selection
+            const stored = localStorage.getItem(STORAGE_KEY);
+            const valid = stored ? found.find(r => r.queryId === stored) : null;
+            if (valid) {
+              setActiveQueryId(valid.queryId);
+              console.log("[Auth] Restored restaurant from localStorage:", valid.queryId);
+            } else {
+              setActiveQueryId(null);
+              localStorage.removeItem(STORAGE_KEY);
+              console.log("[Auth] Multiple restaurants — awaiting user selection");
+            }
+          }
         }
       } else {
+        // Signed out — wipe everything
         setUser(null);
-        setRestaurantId(null);
-        setRestaurantData(null);
+        setRestaurants([]);
+        setActiveQueryId(null);
+        localStorage.removeItem(STORAGE_KEY);
       }
+
       setLoading(false);
     });
     return () => unsubscribe();
   }, [toast]);
 
-  const login = async (email: string, password: string) => {
-    await signInWithEmailAndPassword(auth, email, password);
-  };
+  const setActiveRestaurant = useCallback((queryId: string) => {
+    setRestaurants(prev => {
+      const found = prev.find(r => r.queryId === queryId);
+      if (!found) {
+        console.warn("[Auth] setActiveRestaurant: unknown queryId:", queryId);
+        return prev;
+      }
+      setActiveQueryId(queryId);
+      localStorage.setItem(STORAGE_KEY, queryId);
+      console.log("[Auth] Active restaurant switched to:", queryId);
+      return prev;
+    });
+  }, []);
 
-  const logout = async () => {
+  const login = useCallback(async (email: string, password: string) => {
+    await signInWithEmailAndPassword(auth, email, password);
+  }, []);
+
+  const logout = useCallback(async () => {
     await secureLogout();
-  };
+  }, []);
+
+  const activeRestaurant = restaurants.find(r => r.queryId === activeQueryId) ?? null;
 
   return (
-    <AuthContext.Provider value={{ user, restaurantId, restaurantData, loading, login, logout }}>
+    <AuthContext.Provider
+      value={{
+        user,
+        loading,
+        restaurants,
+        activeRestaurantId: activeQueryId,
+        restaurantId: activeQueryId,            // backward-compat alias
+        restaurantData: activeRestaurant?.data ?? null,
+        needsRestaurantSelection:
+          !loading && user !== null && restaurants.length > 1 && activeQueryId === null,
+        setActiveRestaurant,
+        login,
+        logout,
+      }}
+    >
       {children}
     </AuthContext.Provider>
   );
