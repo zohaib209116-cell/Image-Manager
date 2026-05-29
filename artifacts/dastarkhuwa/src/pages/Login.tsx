@@ -5,34 +5,38 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
 import { Loader2 } from "lucide-react";
+import { Redirect } from "wouter";
 
-/**
- * Login page.
- *
- * Delegates ALL restaurant lookup and access-denied logic to AuthContext —
- * no duplicate Firestore queries here. After signInWithEmailAndPassword
- * resolves, onAuthStateChanged in AuthContext will:
- *   • load the user's restaurants
- *   • auto-select if there is exactly one
- *   • set needsRestaurantSelection = true if there are multiple
- *   • call secureLogout + show toast if there are none
- *
- * ProtectedRoute handles the redirect / selector gating.
- */
 export default function Login() {
-  const { login } = useAuth();
+  const { login, user, loading: authLoading } = useAuth();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [loading, setLoading] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
   const { toast } = useToast();
+
+  // Auth still resolving — show spinner so we don't flash the form
+  if (authLoading) {
+    return (
+      <div className="flex h-screen w-full items-center justify-center bg-background">
+        <Loader2 className="h-8 w-8 animate-spin text-primary" />
+      </div>
+    );
+  }
+
+  // Already signed in — go to / where ProtectedRoute decides:
+  // shows RestaurantSelector (multi-restaurant) or Dashboard (single)
+  if (user) {
+    return <Redirect to="/" />;
+  }
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (loading) return;
-    setLoading(true);
+    if (submitting) return;
+    setSubmitting(true);
     try {
       await login(email, password);
-      // Navigation is handled by ProtectedRoute reacting to auth state change.
+      // onAuthStateChanged in AuthContext will set `user`, triggering the
+      // redirect above on the next render cycle.
     } catch (error: any) {
       const code = error?.code as string | undefined;
       const message =
@@ -45,7 +49,7 @@ export default function Login() {
           : "Sign in failed. Please try again.";
       toast({ title: "Login Failed", description: message, variant: "destructive" });
     } finally {
-      setLoading(false);
+      setSubmitting(false);
     }
   };
 
@@ -91,10 +95,10 @@ export default function Login() {
           <Button
             type="submit"
             className="w-full"
-            disabled={loading}
+            disabled={submitting}
             data-testid="button-signin"
           >
-            {loading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : "Sign In"}
+            {submitting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : "Sign In"}
           </Button>
         </form>
       </div>
