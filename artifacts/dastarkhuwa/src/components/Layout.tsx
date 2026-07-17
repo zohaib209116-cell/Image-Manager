@@ -52,7 +52,6 @@ export function Layout({ children }: { children: React.ReactNode }) {
   const { toast } = useToast();
   const inactivityTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // ── Auto-logout on 30 min inactivity ────────────────────────────────────────
   const resetInactivityTimer = useCallback(() => {
     if (inactivityTimer.current) clearTimeout(inactivityTimer.current);
     inactivityTimer.current = setTimeout(async () => {
@@ -71,10 +70,8 @@ export function Layout({ children }: { children: React.ReactNode }) {
     };
   }, [resetInactivityTimer]);
 
-  // ── Live unread notification count ──────────────────────────────────────────
   useEffect(() => {
     if (!restaurantId) return;
-
     const fetchUnreadCount = async () => {
       const { count } = await supabase
         .from("notifications")
@@ -83,26 +80,18 @@ export function Layout({ children }: { children: React.ReactNode }) {
         .eq("read", false);
       setUnreadCount(count ?? 0);
     };
-
     fetchUnreadCount();
-
     const channel = supabase
       .channel(`layout-notif-${restaurantId}`)
       .on("postgres_changes", { event: "*", schema: "public", table: "notifications", filter: `restaurant_id=eq.${restaurantId}` }, fetchUnreadCount)
       .subscribe();
-
     return () => { supabase.removeChannel(channel); };
   }, [restaurantId]);
 
-  // ── Live booking alert — sound + toast ──────────────────────────────────────
   const handleNewBooking = useCallback((booking: any) => {
     const name = booking.customer_name || "A customer";
     const people = booking.party_size || "";
-    toast({
-      title: "New Booking Request",
-      description: people ? `${name} — party of ${people}` : name,
-      duration: 6000,
-    });
+    toast({ title: "New Booking Request 🔔", description: people ? `${name} — party of ${people}` : name, duration: 6000 });
     setNewBookingPulse(true);
     setTimeout(() => setNewBookingPulse(false), 3000);
   }, [toast]);
@@ -125,29 +114,55 @@ export function Layout({ children }: { children: React.ReactNode }) {
 
   return (
     <div className="flex min-h-screen w-full flex-col bg-background md:flex-row">
-      {/* Mobile Header */}
-      <div className="flex h-16 items-center justify-between border-b border-border bg-card px-4 md:hidden">
-        <div className="flex items-center gap-2">
-          <div className="h-8 w-8 rounded bg-primary flex items-center justify-center font-bold text-primary-foreground">D</div>
-          <span className="font-bold text-foreground">Dastarkhuwa</span>
+
+      {/* ── Mobile Header ── */}
+      <div
+        className="flex h-16 items-center justify-between px-4 md:hidden border-b"
+        style={{ background: "#0E6B63", borderColor: "#0a4f49" }}
+      >
+        <div className="flex items-center gap-2.5">
+          <div className="h-8 w-8 rounded-lg overflow-hidden bg-white/10 flex items-center justify-center">
+            <img src="/dastarkhuwa-logo.jpeg" alt="Dastarkhuwa" className="h-full w-full object-contain" />
+          </div>
+          <span className="font-bold text-white text-base" style={{ fontFamily: "'Poppins', sans-serif" }}>Dastarkhuwa</span>
         </div>
-        <Button variant="ghost" size="icon" onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}>
-          {isMobileMenuOpen ? <X className="h-6 w-6" /> : <Menu className="h-6 w-6" />}
-        </Button>
+        <button
+          onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
+          className="text-white/80 hover:text-white transition-colors p-1.5"
+        >
+          {isMobileMenuOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
+        </button>
       </div>
 
-      {/* Sidebar */}
-      <aside className={cn(
-        "fixed inset-y-0 left-0 z-50 flex w-64 flex-col border-r border-border bg-sidebar transition-transform duration-200 ease-in-out md:relative md:translate-x-0",
-        isMobileMenuOpen ? "translate-x-0" : "-translate-x-full"
-      )}>
-        <div className="flex h-16 shrink-0 items-center gap-3 border-b border-sidebar-border px-6">
-          <div className="h-8 w-8 rounded bg-primary flex items-center justify-center font-bold text-primary-foreground">D</div>
-          <span className="text-lg font-bold text-sidebar-foreground">Dastarkhuwa</span>
+      {/* ── Sidebar ── */}
+      <aside
+        className={cn(
+          "fixed inset-y-0 left-0 z-50 flex w-64 flex-col transition-transform duration-200 ease-in-out md:relative md:translate-x-0",
+          isMobileMenuOpen ? "translate-x-0" : "-translate-x-full"
+        )}
+        style={{ background: "#0E6B63" }}
+      >
+        {/* Logo / Brand */}
+        <div
+          className="flex h-20 shrink-0 items-center gap-3 px-5 border-b"
+          style={{ borderColor: "rgba(255,255,255,0.12)" }}
+        >
+          <div className="h-11 w-11 rounded-xl overflow-hidden bg-white/15 flex items-center justify-center shadow-inner">
+            <img src="/dastarkhuwa-logo.jpeg" alt="Dastarkhuwa" className="h-full w-full object-contain" />
+          </div>
+          <div>
+            <div className="text-lg font-bold text-white leading-tight" style={{ fontFamily: "'Poppins', sans-serif" }}>
+              Dastarkhuwa
+            </div>
+            <div className="text-[10px] text-white/55 leading-tight mt-0.5 font-medium tracking-wide">
+              Communal Dining, Modern Convenience.
+            </div>
+          </div>
         </div>
 
+        {/* Nav */}
         <nav className="flex-1 overflow-y-auto py-4">
-          <ul className="flex flex-col space-y-1 px-3">
+          <ul className="flex flex-col space-y-0.5 px-3">
             {NAV_ITEMS.map((item) => {
               const Icon = item.icon;
               const isActive = location === item.href;
@@ -158,25 +173,29 @@ export function Layout({ children }: { children: React.ReactNode }) {
                     href={item.href}
                     onClick={closeMobileMenu}
                     className={cn(
-                      "flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors",
+                      "flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium transition-all duration-150",
                       isActive
-                        ? "bg-sidebar-accent text-sidebar-accent-foreground"
-                        : "text-sidebar-foreground/70 hover:bg-sidebar-accent/50 hover:text-sidebar-foreground"
+                        ? "text-white shadow-sm"
+                        : "text-white/65 hover:text-white hover:bg-white/10"
                     )}
+                    style={isActive ? { background: "rgba(255,138,61,0.85)", boxShadow: "0 2px 12px rgba(255,138,61,0.4)" } : {}}
                     data-testid={`nav-${item.label.toLowerCase()}`}
                   >
                     <span className="relative">
-                      <Icon className="h-5 w-5" />
+                      <Icon className="h-4.5 w-4.5" style={{ width: 18, height: 18 }} />
                       {isNotif && newBookingPulse && (
                         <span className="absolute -right-1 -top-1 flex h-2 w-2">
-                          <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-primary opacity-75" />
-                          <span className="relative inline-flex rounded-full h-2 w-2 bg-primary" />
+                          <span className="animate-ping absolute inline-flex h-full w-full rounded-full opacity-75" style={{ background: "#FF8A3D" }} />
+                          <span className="relative inline-flex rounded-full h-2 w-2" style={{ background: "#FF8A3D" }} />
                         </span>
                       )}
                     </span>
-                    {item.label}
+                    <span>{item.label}</span>
                     {isNotif && unreadCount > 0 && (
-                      <span className="ml-auto rounded-full bg-primary px-2 py-0.5 text-xs font-bold text-primary-foreground">
+                      <span
+                        className="ml-auto rounded-full px-1.5 py-0.5 text-xs font-bold text-white"
+                        style={{ background: "#FF8A3D", minWidth: 20, textAlign: "center" }}
+                      >
                         {unreadCount > 99 ? "99+" : unreadCount}
                       </span>
                     )}
@@ -187,11 +206,15 @@ export function Layout({ children }: { children: React.ReactNode }) {
           </ul>
         </nav>
 
-        <div className="border-t border-sidebar-border p-4 space-y-2">
+        {/* Bottom Actions */}
+        <div className="border-t p-4 space-y-2" style={{ borderColor: "rgba(255,255,255,0.12)" }}>
           {hasMultiple && (
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
-                <Button variant="ghost" className="w-full justify-between gap-2 text-sidebar-foreground/70 hover:bg-sidebar-accent/50 hover:text-sidebar-foreground text-sm">
+                <Button
+                  variant="ghost"
+                  className="w-full justify-between gap-2 text-white/70 hover:text-white hover:bg-white/10 text-sm"
+                >
                   <span className="flex items-center gap-2 truncate">
                     <Store className="h-4 w-4 shrink-0" />
                     <span className="truncate">{restaurantData?.name || "Switch Restaurant"}</span>
@@ -204,10 +227,11 @@ export function Layout({ children }: { children: React.ReactNode }) {
                   <DropdownMenuItem
                     key={r.queryId}
                     onClick={() => setActiveRestaurant(r.queryId)}
-                    className={cn("cursor-pointer", r.queryId === restaurantId && "font-semibold text-primary")}
+                    className={cn("cursor-pointer", r.queryId === restaurantId && "font-semibold")}
+                    style={{ color: r.queryId === restaurantId ? "#0E6B63" : undefined }}
                   >
                     {r.data.name || r.queryId}
-                    {r.queryId === restaurantId && <span className="ml-auto text-xs text-primary">Active</span>}
+                    {r.queryId === restaurantId && <span className="ml-auto text-xs" style={{ color: "#0E6B63" }}>Active</span>}
                   </DropdownMenuItem>
                 ))}
                 <DropdownMenuSeparator />
@@ -221,31 +245,42 @@ export function Layout({ children }: { children: React.ReactNode }) {
           {!hasMultiple && (
             <Button
               variant="ghost"
-              className="w-full justify-start gap-3 text-sidebar-foreground/70 hover:bg-destructive/20 hover:text-destructive"
+              className="w-full justify-start gap-3 text-white/65 hover:bg-red-500/20 hover:text-red-200 transition-colors text-sm"
               onClick={handleLogout}
               data-testid="button-logout"
             >
-              <LogOut className="h-5 w-5" /> Sign out
+              <LogOut className="h-4 w-4" /> Sign out
             </Button>
           )}
         </div>
       </aside>
 
-      {/* Main Content */}
+      {/* ── Main Content ── */}
       <main className="flex flex-1 flex-col overflow-hidden">
-        <header className="hidden h-16 shrink-0 items-center justify-between border-b border-border bg-card px-8 md:flex">
-          <h1 className="text-xl font-semibold text-foreground">{getPageTitle()}</h1>
-          <div className="flex items-center gap-4">
-            <span className="text-sm font-medium text-muted-foreground">{restaurantData?.name || "Loading..."}</span>
+        <header
+          className="hidden h-16 shrink-0 items-center justify-between border-b px-8 md:flex bg-white"
+          style={{ borderColor: "#0E6B6318" }}
+        >
+          <h1 className="text-lg font-semibold" style={{ color: "#0E6B63", fontFamily: "'Poppins', sans-serif" }}>
+            {getPageTitle()}
+          </h1>
+          <div className="flex items-center gap-3">
+            <span
+              className="text-sm font-semibold px-3 py-1 rounded-full"
+              style={{ background: "#0E6B6312", color: "#0E6B63" }}
+            >
+              {restaurantData?.name || "Loading..."}
+            </span>
           </div>
         </header>
+
         <div className="flex-1 overflow-y-auto p-4 md:p-8">
           <div className="mx-auto max-w-6xl">{children}</div>
         </div>
       </main>
 
       {isMobileMenuOpen && (
-        <div className="fixed inset-0 z-40 bg-black/80 md:hidden" onClick={closeMobileMenu} />
+        <div className="fixed inset-0 z-40 bg-black/60 md:hidden" onClick={closeMobileMenu} />
       )}
     </div>
   );

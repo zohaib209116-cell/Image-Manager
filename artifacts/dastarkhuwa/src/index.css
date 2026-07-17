@@ -60,43 +60,57 @@
   --radius-xl: calc(var(--radius) + 4px);
 }
 
-:root {
-  --button-outline: rgba(0,0,0, .10);
-  --badge-outline: rgba(0,0,0, .05);
-  --opaque-button-border-intensity: -8;
-  --elevate-1: rgba(0,0,0, .03);
-  --elevate-2: rgba(0,0,0, .08);
+/* ── Dastarkhuwa Brand Palette ───────────────────────────────────────────────
+   Primary:   Deep Teal Green  #0E6B63  hsl(175 77% 24%)
+   Secondary: Sunset Orange    #FF8A3D  hsl(24 100% 62%)
+   Accent:    Golden Yellow    #FFC857  hsl(40 100% 67%)
+   Surface:   Cream Off-White  #FFF4E6  hsl(34 100% 95%)
+ ─────────────────────────────────────────────────────────────────────────── */
 
-  --background: 0 0% 100%;
-  --foreground: 240 10% 4%;
+:root {
+  --button-outline: rgba(14, 107, 99, 0.15);
+  --badge-outline: rgba(14, 107, 99, 0.08);
+  --opaque-button-border-intensity: -8;
+  --elevate-1: rgba(14, 107, 99, 0.04);
+  --elevate-2: rgba(14, 107, 99, 0.10);
+
+  /* Surfaces */
+  --background: 34 60% 97%;
+  --foreground: 175 77% 14%;
   --card: 0 0% 100%;
-  --card-foreground: 240 10% 4%;
+  --card-foreground: 175 77% 14%;
   --popover: 0 0% 100%;
-  --popover-foreground: 240 10% 4%;
-  --primary: 355 78% 56%;
-  --primary-foreground: 0 0% 98%;
-  --secondary: 27 87% 67%;
+  --popover-foreground: 175 77% 14%;
+
+  /* Brand */
+  --primary: 175 77% 24%;
+  --primary-foreground: 34 100% 95%;
+  --secondary: 24 100% 62%;
   --secondary-foreground: 0 0% 98%;
-  --muted: 240 5% 96%;
-  --muted-foreground: 240 4% 46%;
-  --accent: 240 5% 96%;
-  --accent-foreground: 240 10% 4%;
+  --accent: 40 100% 67%;
+  --accent-foreground: 175 77% 14%;
+
+  /* UI */
+  --muted: 175 20% 94%;
+  --muted-foreground: 175 30% 40%;
   --destructive: 0 84% 60%;
   --destructive-foreground: 0 0% 98%;
-  --border: 240 6% 90%;
-  --input: 240 6% 90%;
-  --ring: 355 78% 56%;
-  --sidebar: 213 73% 22%;
-  --sidebar-foreground: 0 0% 98%;
-  --sidebar-border: 224 48% 25%;
-  --sidebar-primary: 355 78% 56%;
-  --sidebar-primary-foreground: 0 0% 98%;
-  --sidebar-accent: 224 48% 25%;
-  --sidebar-accent-foreground: 0 0% 98%;
-  --sidebar-ring: 355 78% 56%;
-  --radius: 0.5rem;
+  --border: 175 20% 88%;
+  --input: 175 20% 92%;
+  --ring: 175 77% 24%;
 
-  --app-font-sans: 'Inter', sans-serif;
+  /* Sidebar — solid teal brand color */
+  --sidebar: 175 77% 24%;
+  --sidebar-foreground: 34 100% 95%;
+  --sidebar-border: 175 60% 20%;
+  --sidebar-primary: 24 100% 62%;
+  --sidebar-primary-foreground: 0 0% 98%;
+  --sidebar-accent: 175 60% 20%;
+  --sidebar-accent-foreground: 34 100% 92%;
+  --sidebar-ring: 24 100% 62%;
+
+  --radius: 0.875rem;
+  --app-font-sans: 'Poppins', sans-serif;
   --app-font-serif: Georgia, serif;
   --app-font-mono: Menlo, monospace;
 }
@@ -108,33 +122,33 @@
   --elevate-1: rgba(255,255,255, .04);
   --elevate-2: rgba(255,255,255, .09);
 
-  --background: 240 28% 14%;
-  --foreground: 0 0% 92%;
-  --card: 224 48% 16%;
-  --card-foreground: 0 0% 92%;
-  --popover: 224 48% 16%;
-  --popover-foreground: 0 0% 92%;
-  --primary: 355 78% 56%;
-  --primary-foreground: 0 0% 98%;
-  --secondary: 27 87% 67%;
+  --background: 175 60% 7%;
+  --foreground: 34 100% 93%;
+  --card: 175 50% 11%;
+  --card-foreground: 34 100% 93%;
+  --popover: 175 50% 11%;
+  --popover-foreground: 34 100% 93%;
+  --primary: 175 65% 38%;
+  --primary-foreground: 34 100% 95%;
+  --secondary: 24 100% 62%;
   --secondary-foreground: 0 0% 98%;
-  --muted: 224 48% 25%;
-  --muted-foreground: 240 10% 70%;
-  --accent: 224 48% 25%;
-  --accent-foreground: 0 0% 92%;
+  --accent: 40 100% 55%;
+  --accent-foreground: 175 77% 8%;
+  --muted: 175 40% 16%;
+  --muted-foreground: 175 20% 65%;
   --destructive: 0 84% 60%;
   --destructive-foreground: 0 0% 98%;
-  --border: 224 48% 25%;
-  --input: 224 48% 25%;
-  --ring: 355 78% 56%;
-  --sidebar: 213 73% 22%;
-  --sidebar-foreground: 0 0% 92%;
-  --sidebar-border: 224 48% 25%;
-  --sidebar-primary: 355 78% 56%;
+  --border: 175 40% 18%;
+  --input: 175 40% 18%;
+  --ring: 175 65% 38%;
+  --sidebar: 175 77% 12%;
+  --sidebar-foreground: 34 100% 93%;
+  --sidebar-border: 175 50% 16%;
+  --sidebar-primary: 24 100% 62%;
   --sidebar-primary-foreground: 0 0% 98%;
-  --sidebar-accent: 224 48% 25%;
-  --sidebar-accent-foreground: 0 0% 92%;
-  --sidebar-ring: 355 78% 56%;
+  --sidebar-accent: 175 50% 18%;
+  --sidebar-accent-foreground: 34 100% 90%;
+  --sidebar-ring: 24 100% 62%;
 }
 
 @layer base {
@@ -144,4 +158,15 @@
   body {
     @apply font-sans antialiased bg-background text-foreground;
   }
+}
+
+/* ── Dastarkhuwa Gradient Utilities ─────────────────────────────────────── */
+.brand-gradient {
+  background: linear-gradient(135deg, #0E6B63 0%, #FF8A3D 100%);
+}
+.brand-gradient-text {
+  background: linear-gradient(135deg, #0E6B63 0%, #FF8A3D 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
 }
