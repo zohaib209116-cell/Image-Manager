@@ -1,11 +1,9 @@
 import { useEffect, useRef } from "react";
-import { collection, query, where, onSnapshot, Timestamp } from "firebase/firestore";
-import { db } from "@/lib/firebase";
+import { supabase } from "@/lib/supabase";
 
 function playNotificationSound() {
   try {
     const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
-
     const playTone = (freq: number, startTime: number, duration: number, gain: number) => {
       const osc = ctx.createOscillator();
       const gainNode = ctx.createGain();
@@ -19,7 +17,6 @@ function playNotificationSound() {
       osc.start(startTime);
       osc.stop(startTime + duration);
     };
-
     const now = ctx.currentTime;
     playTone(880, now, 0.15, 0.3);
     playTone(1100, now + 0.15, 0.15, 0.25);
@@ -41,31 +38,33 @@ export function useBookingAlert({ restaurantId, onNewBooking }: UseBookingAlertO
   useEffect(() => {
     if (!restaurantId) return;
 
-    const startTime = Timestamp.now();
-    const q = query(
-      collection(db, "bookings"),
-      where("restaurantId", "==", restaurantId),
-      where("createdAt", ">=", startTime)
-    );
-
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      if (!initializedRef.current) {
-        // Seed known IDs on first load — don't alert for existing bookings
-        snapshot.docs.forEach(d => knownIdsRef.current.add(d.id));
+    // Seed existing booking IDs so we don't alert on page load
+    supabase
+      .from("bookings")
+      .select("id")
+      .eq("restaurant_id", restaurantId)
+      .then(({ data }) => {
+        (data || []).forEach(b => knownIdsRef.current.add(b.id));
         initializedRef.current = true;
-        return;
-      }
-
-      snapshot.docChanges().forEach(change => {
-        if (change.type === "added" && !knownIdsRef.current.has(change.doc.id)) {
-          knownIdsRef.current.add(change.doc.id);
-          const booking = { id: change.doc.id, ...change.doc.data() };
-          playNotificationSound();
-          onNewBooking?.(booking);
-        }
       });
-    });
 
-    return () => unsubscribe();
+    const channel = supabase
+      .channel(`booking-alerts-${restaurantId}`)
+      .on(
+        "postgres_changes",
+        { event: "INSERT", schema: "public", table: "bookings", filter: `restaurant_id=eq.${restaurantId}` },
+        (payload) => {
+          const booking = payload.new as any;
+          if (!initializedRef.current) return;
+          if (!knownIdsRef.current.has(booking.id)) {
+            knownIdsRef.current.add(booking.id);
+            playNotificationSound();
+            onNewBooking?.(booking);
+          }
+        }
+      )
+      .subscribe();
+
+    return () => { supabase.removeChannel(channel); };
   }, [restaurantId, onNewBooking]);
 }

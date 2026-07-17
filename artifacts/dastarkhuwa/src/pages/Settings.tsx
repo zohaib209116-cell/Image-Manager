@@ -1,7 +1,6 @@
 import { useState, useEffect } from "react";
 import { useAuth } from "@/hooks/useAuth";
-import { db } from "@/lib/firebase";
-import { doc, getDoc, updateDoc, serverTimestamp } from "firebase/firestore";
+import { supabase } from "@/lib/supabase";
 import { sanitizeNum, safeErrorMessage } from "@/lib/security";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -26,18 +25,22 @@ export default function Settings() {
     newBookingAlerts: true,
     cancellationAlerts: true,
     slotDuration: "60",
-    maxBookingsPerSlot: "10"
+    maxBookingsPerSlot: "10",
   });
 
   useEffect(() => {
     const fetchSettings = async () => {
       if (!restaurantId) return;
       try {
-        const docSnap = await getDoc(doc(db, "restaurants", restaurantId));
-        if (docSnap.exists() && docSnap.data().settings) {
-          setSettings(docSnap.data().settings);
+        const { data, error } = await supabase
+          .from("restaurants")
+          .select("settings")
+          .eq("id", restaurantId)
+          .single();
+        if (!error && data?.settings) {
+          setSettings(data.settings);
         }
-      } catch (error) {
+      } catch {
         // Silent — defaults remain
       } finally {
         setLoading(false);
@@ -49,7 +52,6 @@ export default function Settings() {
   const handleSave = async () => {
     if (!restaurantId || saving) return;
 
-    // Validate before write
     const slotDuration = VALID_SLOT_DURATIONS.includes(settings.slotDuration as any) ? settings.slotDuration : "60";
     const maxPerSlot = sanitizeNum(settings.maxBookingsPerSlot, 1, 100);
     if (maxPerSlot === null) {
@@ -59,16 +61,20 @@ export default function Settings() {
 
     setSaving(true);
     try {
-      await updateDoc(doc(db, "restaurants", restaurantId), {
-        settings: {
-          autoConfirmBookings: Boolean(settings.autoConfirmBookings),
-          newBookingAlerts: Boolean(settings.newBookingAlerts),
-          cancellationAlerts: Boolean(settings.cancellationAlerts),
-          slotDuration,
-          maxBookingsPerSlot: String(maxPerSlot),
-        },
-        updatedAt: serverTimestamp(),
-      });
+      const { error } = await supabase
+        .from("restaurants")
+        .update({
+          settings: {
+            autoConfirmBookings: Boolean(settings.autoConfirmBookings),
+            newBookingAlerts: Boolean(settings.newBookingAlerts),
+            cancellationAlerts: Boolean(settings.cancellationAlerts),
+            slotDuration,
+            maxBookingsPerSlot: String(maxPerSlot),
+          },
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", restaurantId);
+      if (error) throw error;
       toast({ title: "Settings Saved", description: "Your preferences have been updated." });
     } catch (error) {
       toast({ title: "Error", description: safeErrorMessage(error), variant: "destructive" });
@@ -103,12 +109,8 @@ export default function Settings() {
               <Label className="text-base">Auto-Confirm Bookings</Label>
               <p className="text-sm text-muted-foreground">Automatically accept bookings without manual review.</p>
             </div>
-            <Switch
-              checked={settings.autoConfirmBookings}
-              onCheckedChange={(c) => handleChange("autoConfirmBookings", c)}
-            />
+            <Switch checked={settings.autoConfirmBookings} onCheckedChange={(c) => handleChange("autoConfirmBookings", c)} />
           </div>
-
           <div className="grid grid-cols-2 gap-6">
             <div className="space-y-2">
               <Label>Slot Duration</Label>
@@ -148,20 +150,14 @@ export default function Settings() {
               <Label className="text-base">New Booking Alerts</Label>
               <p className="text-sm text-muted-foreground">Get notified when a new request arrives.</p>
             </div>
-            <Switch
-              checked={settings.newBookingAlerts}
-              onCheckedChange={(c) => handleChange("newBookingAlerts", c)}
-            />
+            <Switch checked={settings.newBookingAlerts} onCheckedChange={(c) => handleChange("newBookingAlerts", c)} />
           </div>
           <div className="flex items-center justify-between">
             <div className="space-y-0.5">
               <Label className="text-base">Cancellation Alerts</Label>
               <p className="text-sm text-muted-foreground">Get notified if a customer cancels.</p>
             </div>
-            <Switch
-              checked={settings.cancellationAlerts}
-              onCheckedChange={(c) => handleChange("cancellationAlerts", c)}
-            />
+            <Switch checked={settings.cancellationAlerts} onCheckedChange={(c) => handleChange("cancellationAlerts", c)} />
           </div>
         </CardContent>
       </Card>

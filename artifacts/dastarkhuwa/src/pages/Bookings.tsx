@@ -1,7 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { useAuth } from "@/hooks/useAuth";
-import { db } from "@/lib/firebase";
-import { collection, query, where, onSnapshot, doc, updateDoc, limit, serverTimestamp } from "firebase/firestore";
+import { supabase } from "@/lib/supabase";
 import { formatKarachiTime } from "@/lib/utils";
 import { safeErrorMessage, isValidBookingStatus } from "@/lib/security";
 import { Card, CardContent } from "@/components/ui/card";
@@ -28,27 +27,28 @@ export default function Bookings() {
     if (!restaurantId) { setLoading(false); return; }
 
     setLoading(true);
-    const q = query(
-      collection(db, "bookings"),
-      where("restaurantId", "==", restaurantId),
-      where("isDeleted", "==", false),
-      limit(200)
-    );
 
-    const unsubscribe = onSnapshot(
-      q,
-      (snapshot) => {
-        const data = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
-        setBookings(data.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()));
-        setLoading(false);
-      },
-      (error) => {
-        console.error("[Bookings] listener error:", error);
-        setLoading(false);
+    const fetchBookings = async () => {
+      const { data, error } = await supabase
+        .from("bookings")
+        .select("*")
+        .eq("restaurant_id", restaurantId)
+        .eq("is_deleted", false)
+        .limit(200);
+      if (!error) {
+        setBookings((data || []).sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()));
       }
-    );
+      setLoading(false);
+    };
 
-    return () => unsubscribe();
+    fetchBookings();
+
+    const channel = supabase
+      .channel(`bookings-page-${restaurantId}`)
+      .on("postgres_changes", { event: "*", schema: "public", table: "bookings", filter: `restaurant_id=eq.${restaurantId}` }, fetchBookings)
+      .subscribe();
+
+    return () => { supabase.removeChannel(channel); };
   }, [restaurantId, authLoading]);
 
   const updateStatus = async (id: string, newStatus: string) => {
@@ -56,13 +56,14 @@ export default function Bookings() {
       toast({ title: "Invalid Status", description: "That status is not allowed.", variant: "destructive" });
       return;
     }
-    if (updatingRef.current.has(id)) return; // duplicate-action guard
+    if (updatingRef.current.has(id)) return;
     updatingRef.current.add(id);
     try {
-      await updateDoc(doc(db, "bookings", id), {
-        status: newStatus,
-        updatedAt: serverTimestamp(),
-      });
+      const { error } = await supabase
+        .from("bookings")
+        .update({ status: newStatus, updated_at: new Date().toISOString() })
+        .eq("id", id);
+      if (error) throw error;
       toast({ title: "Status Updated", description: `Booking is now ${newStatus}.` });
     } catch (error) {
       toast({ title: "Error", description: safeErrorMessage(error), variant: "destructive" });
@@ -73,7 +74,7 @@ export default function Bookings() {
 
   const filteredBookings = bookings.filter(b => {
     const matchesSearch =
-      b.customerName?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      b.customer_name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
       b.phone?.includes(searchTerm);
     const matchesStatus = statusFilter === "all" || b.status === statusFilter;
 
@@ -96,7 +97,7 @@ export default function Bookings() {
   const getStatusBadge = (status: string) => {
     switch (status) {
       case "confirmed": return <Badge className="bg-green-500 hover:bg-green-600">Confirmed</Badge>;
-      case "pending": return <Badge variant="secondary" className="bg-secondary text-secondary-foreground">Pending</Badge>;
+      case "pending": return <Badge variant="secondary">Pending</Badge>;
       case "cancelled": return <Badge variant="destructive">Cancelled</Badge>;
       case "rejected": return <Badge variant="destructive">Rejected</Badge>;
       case "completed": return <Badge className="bg-blue-500 hover:bg-blue-600 text-white">Completed</Badge>;
@@ -112,7 +113,6 @@ export default function Bookings() {
     <div className="space-y-6">
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
         <h2 className="text-3xl font-bold tracking-tight">Bookings</h2>
-
         <div className="flex flex-wrap items-center gap-2">
           <div className="relative">
             <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
@@ -124,9 +124,7 @@ export default function Bookings() {
             />
           </div>
           <Select value={statusFilter} onValueChange={setStatusFilter}>
-            <SelectTrigger className="w-[140px]">
-              <SelectValue placeholder="Status" />
-            </SelectTrigger>
+            <SelectTrigger className="w-[140px]"><SelectValue placeholder="Status" /></SelectTrigger>
             <SelectContent>
               <SelectItem value="all">All Statuses</SelectItem>
               <SelectItem value="pending">Pending</SelectItem>
@@ -137,9 +135,7 @@ export default function Bookings() {
             </SelectContent>
           </Select>
           <Select value={timeFilter} onValueChange={setTimeFilter}>
-            <SelectTrigger className="w-[140px]">
-              <SelectValue placeholder="Time" />
-            </SelectTrigger>
+            <SelectTrigger className="w-[140px]"><SelectValue placeholder="Time" /></SelectTrigger>
             <SelectContent>
               <SelectItem value="all">All Time</SelectItem>
               <SelectItem value="today">Today</SelectItem>
@@ -152,9 +148,7 @@ export default function Bookings() {
 
       <div className="grid gap-4">
         {filteredBookings.length === 0 ? (
-          <Card className="p-8 text-center text-muted-foreground border-dashed">
-            No bookings found matching your filters.
-          </Card>
+          <Card className="p-8 text-center text-muted-foreground border-dashed">No bookings found matching your filters.</Card>
         ) : (
           filteredBookings.map(booking => (
             <Card key={booking.id} className="overflow-hidden transition-all hover:border-primary/30">
@@ -163,7 +157,7 @@ export default function Bookings() {
                   <div className="grid grid-cols-2 md:grid-cols-4 gap-4 md:gap-8 flex-1">
                     <div>
                       <p className="text-sm text-muted-foreground">Customer</p>
-                      <p className="font-semibold text-foreground">{booking.customerName}</p>
+                      <p className="font-semibold text-foreground">{booking.customer_name}</p>
                       <p className="text-xs text-muted-foreground">{booking.phone}</p>
                     </div>
                     <div>
@@ -172,11 +166,9 @@ export default function Bookings() {
                     </div>
                     <div>
                       <p className="text-sm text-muted-foreground">Details</p>
-                      <p className="font-medium">{booking.partySize} People</p>
-                      {booking.specialRequest && (
-                        <p className="text-xs text-muted-foreground truncate" title={booking.specialRequest}>
-                          Req: {booking.specialRequest}
-                        </p>
+                      <p className="font-medium">{booking.party_size} People</p>
+                      {booking.special_request && (
+                        <p className="text-xs text-muted-foreground truncate" title={booking.special_request}>Req: {booking.special_request}</p>
                       )}
                     </div>
                     <div>
@@ -188,31 +180,16 @@ export default function Bookings() {
                   <div className="flex flex-row md:flex-col lg:flex-row gap-2 shrink-0 border-t md:border-t-0 md:border-l border-border pt-4 md:pt-0 md:pl-4">
                     {booking.status === "pending" && (
                       <>
-                        <Button
-                          size="sm"
-                          onClick={() => updateStatus(booking.id, "confirmed")}
-                          disabled={updatingRef.current.has(booking.id)}
-                          className="bg-green-500 hover:bg-green-600 text-white"
-                        >
+                        <Button size="sm" onClick={() => updateStatus(booking.id, "confirmed")} disabled={updatingRef.current.has(booking.id)} className="bg-green-500 hover:bg-green-600 text-white">
                           <Check className="h-4 w-4 mr-1" /> Confirm
                         </Button>
-                        <Button
-                          size="sm"
-                          variant="destructive"
-                          onClick={() => updateStatus(booking.id, "cancelled")}
-                          disabled={updatingRef.current.has(booking.id)}
-                        >
+                        <Button size="sm" variant="destructive" onClick={() => updateStatus(booking.id, "cancelled")} disabled={updatingRef.current.has(booking.id)}>
                           <X className="h-4 w-4 mr-1" /> Reject
                         </Button>
                       </>
                     )}
                     {booking.status === "confirmed" && (
-                      <Button
-                        size="sm"
-                        onClick={() => updateStatus(booking.id, "completed")}
-                        disabled={updatingRef.current.has(booking.id)}
-                        className="bg-blue-500 hover:bg-blue-600 text-white"
-                      >
+                      <Button size="sm" onClick={() => updateStatus(booking.id, "completed")} disabled={updatingRef.current.has(booking.id)} className="bg-blue-500 hover:bg-blue-600 text-white">
                         <CheckCheck className="h-4 w-4 mr-1" /> Complete
                       </Button>
                     )}

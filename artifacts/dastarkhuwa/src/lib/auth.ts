@@ -1,8 +1,7 @@
-import { signOut } from "firebase/auth";
-import { auth } from "@/lib/firebase";
+import { supabase } from "@/lib/supabase";
 
 export async function secureLogout(): Promise<void> {
   try {
-    await signOut(auth);
+    await supabase.auth.signOut();
   } catch (_) {}
 }

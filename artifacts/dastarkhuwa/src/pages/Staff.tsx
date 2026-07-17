@@ -1,7 +1,6 @@
 import { useState, useEffect } from "react";
 import { useAuth } from "@/hooks/useAuth";
-import { auth, db } from "@/lib/firebase";
-import { collection, query, where, onSnapshot, addDoc, updateDoc, doc, serverTimestamp, limit } from "firebase/firestore";
+import { supabase } from "@/lib/supabase";
 import { sanitizeStr, isValidStaffRole, safeErrorMessage } from "@/lib/security";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -17,7 +16,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 
 export default function Staff() {
-  const { restaurantId, loading: authLoading } = useAuth();
+  const { restaurantId, user, loading: authLoading } = useAuth();
   const [staff, setStaff] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -37,25 +36,26 @@ export default function Staff() {
     if (!restaurantId) { setLoading(false); return; }
 
     setLoading(true);
-    const q = query(
-      collection(db, `staff/${restaurantId}/members`),
-      where("isDeleted", "==", false),
-      limit(100)
-    );
 
-    const unsubscribe = onSnapshot(
-      q,
-      (snapshot) => {
-        setStaff(snapshot.docs.map(d => ({ id: d.id, ...d.data() })));
-        setLoading(false);
-      },
-      (error) => {
-        console.error("[Staff] listener error:", error);
-        setLoading(false);
-      }
-    );
+    const fetchStaff = async () => {
+      const { data, error } = await supabase
+        .from("staff")
+        .select("*")
+        .eq("restaurant_id", restaurantId)
+        .eq("is_deleted", false)
+        .limit(100);
+      if (!error) setStaff(data || []);
+      setLoading(false);
+    };
 
-    return () => unsubscribe();
+    fetchStaff();
+
+    const channel = supabase
+      .channel(`staff-${restaurantId}`)
+      .on("postgres_changes", { event: "*", schema: "public", table: "staff", filter: `restaurant_id=eq.${restaurantId}` }, fetchStaff)
+      .subscribe();
+
+    return () => { supabase.removeChannel(channel); };
   }, [restaurantId, authLoading]);
 
   const resetForm = () => {
@@ -68,7 +68,7 @@ export default function Staff() {
       setName(member.name);
       setRole(member.role);
       setPhone(member.phone || "");
-      setIsActive(member.isActive !== false);
+      setIsActive(member.is_active !== false);
     } else {
       resetForm();
     }
@@ -82,38 +82,25 @@ export default function Staff() {
     const cleanPhone = sanitizeStr(phone, 20);
     const cleanRole = isValidStaffRole(role) ? role : null;
 
-    if (!cleanName) {
-      toast({ title: "Validation Error", description: "Name is required (max 100 chars).", variant: "destructive" });
-      return;
-    }
-    if (!cleanRole) {
-      toast({ title: "Validation Error", description: "Invalid role selected.", variant: "destructive" });
-      return;
-    }
+    if (!cleanName) { toast({ title: "Validation Error", description: "Name is required (max 100 chars).", variant: "destructive" }); return; }
+    if (!cleanRole) { toast({ title: "Validation Error", description: "Invalid role selected.", variant: "destructive" }); return; }
 
     setIsSaving(true);
     try {
-      const baseData = {
-        name: cleanName,
-        role: cleanRole,
-        phone: cleanPhone,
-        isActive,
-        restaurantId,
-        updatedAt: serverTimestamp(),
-      };
-
       if (editingStaff) {
-        await updateDoc(doc(db, `staff/${restaurantId}/members`, editingStaff.id), baseData);
+        const { error } = await supabase
+          .from("staff")
+          .update({ name: cleanName, role: cleanRole, phone: cleanPhone, is_active: isActive, updated_at: new Date().toISOString() })
+          .eq("id", editingStaff.id);
+        if (error) throw error;
         toast({ title: "Staff Updated", description: "Staff member has been updated." });
       } else {
-        const uid = auth.currentUser?.uid;
-        if (!uid) throw new Error("Not authenticated — cannot write ownerId");
-        await addDoc(collection(db, `staff/${restaurantId}/members`), {
-          ...baseData,
-          ownerId: uid,
-          isDeleted: false,
-          createdAt: serverTimestamp(),
-        });
+        const uid = user?.id;
+        if (!uid) throw new Error("Not authenticated");
+        const { error } = await supabase
+          .from("staff")
+          .insert({ name: cleanName, role: cleanRole, phone: cleanPhone, is_active: isActive, restaurant_id: restaurantId, owner_id: uid, is_deleted: false });
+        if (error) throw error;
         toast({ title: "Staff Added", description: "Staff member has been added successfully." });
       }
       setIsModalOpen(false);
@@ -129,11 +116,8 @@ export default function Staff() {
     if (isDeleting) return;
     setIsDeleting(id);
     try {
-      // Soft delete — never permanently remove
-      await updateDoc(doc(db, `staff/${restaurantId}/members`, id), {
-        isDeleted: true,
-        deletedAt: serverTimestamp(),
-      });
+      const { error } = await supabase.from("staff").update({ is_deleted: true, updated_at: new Date().toISOString() }).eq("id", id);
+      if (error) throw error;
       toast({ title: "Staff Removed", description: "Staff member has been removed." });
     } catch (error) {
       toast({ title: "Error", description: safeErrorMessage(error), variant: "destructive" });
@@ -153,12 +137,9 @@ export default function Staff() {
           <h2 className="text-3xl font-bold tracking-tight">Staff Management</h2>
           <p className="text-muted-foreground mt-1">Manage roles and access for your team.</p>
         </div>
-
         <Dialog open={isModalOpen} onOpenChange={(open) => { setIsModalOpen(open); if (!open) resetForm(); }}>
           <DialogTrigger asChild>
-            <Button onClick={() => handleOpenModal()} className="gap-2">
-              <Plus className="h-4 w-4" /> Add Staff
-            </Button>
+            <Button onClick={() => handleOpenModal()} className="gap-2"><Plus className="h-4 w-4" /> Add Staff</Button>
           </DialogTrigger>
           <DialogContent className="sm:max-w-[425px]">
             <DialogHeader>
@@ -205,7 +186,7 @@ export default function Staff() {
           </div>
         ) : (
           staff.map(member => (
-            <Card key={member.id} className={cn("overflow-hidden transition-all", !member.isActive && "opacity-60")}>
+            <Card key={member.id} className={cn("overflow-hidden transition-all", !member.is_active && "opacity-60")}>
               <CardContent className="p-6">
                 <div className="flex justify-between items-start">
                   <div className="flex items-center gap-3">
@@ -242,16 +223,12 @@ export default function Staff() {
                     </AlertDialog>
                   </div>
                 </div>
-
                 {member.phone && (
                   <div className="mt-4 flex items-center text-sm text-muted-foreground border-t border-border pt-4">
                     <Phone className="h-4 w-4 mr-2" /> {member.phone}
                   </div>
                 )}
-
-                {!member.isActive && (
-                  <div className="mt-2 text-xs font-semibold text-destructive">Inactive Account</div>
-                )}
+                {!member.is_active && <div className="mt-2 text-xs font-semibold text-destructive">Inactive Account</div>}
               </CardContent>
             </Card>
           ))

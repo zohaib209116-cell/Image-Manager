@@ -1,7 +1,6 @@
 import { useState, useEffect } from "react";
 import { useAuth } from "@/hooks/useAuth";
-import { db } from "@/lib/firebase";
-import { collection, query, where, orderBy, onSnapshot, doc, updateDoc, writeBatch } from "firebase/firestore";
+import { supabase } from "@/lib/supabase";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { formatKarachiTime } from "@/lib/utils";
@@ -19,48 +18,44 @@ export default function Notifications() {
     if (!restaurantId) { setLoading(false); return; }
 
     setLoading(true);
-    const q = query(
-      collection(db, "notifications"),
-      where("restaurantId", "==", restaurantId),
-      orderBy("createdAt", "desc")
-    );
 
-    const unsubscribe = onSnapshot(
-      q,
-      (snapshot) => {
-        const data = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
-        setNotifications(data.sort((a, b) => {
-          const aTime = a.createdAt?.toMillis?.() ?? new Date(a.createdAt).getTime();
-          const bTime = b.createdAt?.toMillis?.() ?? new Date(b.createdAt).getTime();
-          return bTime - aTime;
-        }));
-        setLoading(false);
-      },
-      (error) => {
-        console.error("[Notifications] listener error:", error);
-        setLoading(false);
-      }
-    );
+    const fetchNotifications = async () => {
+      const { data, error } = await supabase
+        .from("notifications")
+        .select("*")
+        .eq("restaurant_id", restaurantId)
+        .order("created_at", { ascending: false });
+      if (!error) setNotifications(data || []);
+      setLoading(false);
+    };
 
-    return () => unsubscribe();
+    fetchNotifications();
+
+    const channel = supabase
+      .channel(`notifications-page-${restaurantId}`)
+      .on("postgres_changes", { event: "*", schema: "public", table: "notifications", filter: `restaurant_id=eq.${restaurantId}` }, fetchNotifications)
+      .subscribe();
+
+    return () => { supabase.removeChannel(channel); };
   }, [restaurantId, authLoading]);
 
   const markAsRead = async (id: string) => {
     try {
-      await updateDoc(doc(db, "notifications", id), { read: true });
+      await supabase.from("notifications").update({ read: true }).eq("id", id);
     } catch (error) {
       console.error(error);
     }
   };
 
   const markAllAsRead = async () => {
-    const batch = writeBatch(db);
-    notifications.filter(n => !n.read).forEach(n => {
-      const ref = doc(db, "notifications", n.id);
-      batch.update(ref, { read: true });
-    });
+    const unread = notifications.filter(n => !n.read);
+    if (unread.length === 0) return;
     try {
-      await batch.commit();
+      await supabase
+        .from("notifications")
+        .update({ read: true })
+        .eq("restaurant_id", restaurantId)
+        .eq("read", false);
     } catch (error) {
       console.error(error);
     }
@@ -83,8 +78,7 @@ export default function Notifications() {
         </div>
         {unreadCount > 0 && (
           <Button variant="outline" onClick={markAllAsRead} className="gap-2">
-            <CheckCheck className="h-4 w-4" />
-            Mark all as read
+            <CheckCheck className="h-4 w-4" /> Mark all as read
           </Button>
         )}
       </div>
@@ -102,16 +96,11 @@ export default function Notifications() {
               data-testid={`notification-card-${notif.id}`}
               className={cn(
                 "transition-all duration-200",
-                !notif.read
-                  ? "border-primary bg-primary/5 shadow-sm shadow-primary/10"
-                  : "bg-card/50 border-border"
+                !notif.read ? "border-primary bg-primary/5 shadow-sm shadow-primary/10" : "bg-card/50 border-border"
               )}
             >
               <CardContent className="p-4 flex items-start gap-4">
-                <div className={cn(
-                  "mt-1 p-2 rounded-full shrink-0",
-                  !notif.read ? "bg-primary/20 text-primary" : "bg-muted text-muted-foreground"
-                )}>
+                <div className={cn("mt-1 p-2 rounded-full shrink-0", !notif.read ? "bg-primary/20 text-primary" : "bg-muted text-muted-foreground")}>
                   {!notif.read ? (
                     <span className="relative flex h-4 w-4 items-center justify-center">
                       <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-primary opacity-30" />
@@ -125,9 +114,7 @@ export default function Notifications() {
                   <p className={cn("text-sm", !notif.read ? "font-semibold text-foreground" : "text-muted-foreground")}>
                     {notif.message}
                   </p>
-                  <p className="text-xs text-muted-foreground mt-1">
-                    {formatKarachiTime(notif.createdAt)}
-                  </p>
+                  <p className="text-xs text-muted-foreground mt-1">{formatKarachiTime(notif.created_at)}</p>
                 </div>
                 {!notif.read && (
                   <Button

@@ -1,7 +1,6 @@
 import { useState, useEffect } from "react";
 import { useAuth } from "@/hooks/useAuth";
-import { auth, db } from "@/lib/firebase";
-import { collection, query, where, onSnapshot, addDoc, updateDoc, doc, serverTimestamp, limit } from "firebase/firestore";
+import { supabase } from "@/lib/supabase";
 import { sanitizeStr, sanitizeNum, isValidTableStatus, isValidTableLocation, safeErrorMessage } from "@/lib/security";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -16,7 +15,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 
 export default function Tables() {
-  const { restaurantId, loading: authLoading } = useAuth();
+  const { restaurantId, user, loading: authLoading } = useAuth();
   const [tables, setTables] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -36,28 +35,28 @@ export default function Tables() {
     if (!restaurantId) { setLoading(false); return; }
 
     setLoading(true);
-    const q = query(
-      collection(db, `tables/${restaurantId}/slots`),
-      where("isDeleted", "==", false),
-      limit(100)
-    );
 
-    const unsubscribe = onSnapshot(
-      q,
-      (snapshot) => {
-        const data = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
-        setTables(data.sort((a, b) =>
-          a.tableNumber.localeCompare(b.tableNumber, undefined, { numeric: true })
-        ));
-        setLoading(false);
-      },
-      (error) => {
-        console.error("[Tables] listener error:", error);
-        setLoading(false);
+    const fetchTables = async () => {
+      const { data, error } = await supabase
+        .from("tables")
+        .select("*")
+        .eq("restaurant_id", restaurantId)
+        .eq("is_deleted", false)
+        .limit(100);
+      if (!error) {
+        setTables((data || []).sort((a, b) => a.table_number.localeCompare(b.table_number, undefined, { numeric: true })));
       }
-    );
+      setLoading(false);
+    };
 
-    return () => unsubscribe();
+    fetchTables();
+
+    const channel = supabase
+      .channel(`tables-${restaurantId}`)
+      .on("postgres_changes", { event: "*", schema: "public", table: "tables", filter: `restaurant_id=eq.${restaurantId}` }, fetchTables)
+      .subscribe();
+
+    return () => { supabase.removeChannel(channel); };
   }, [restaurantId, authLoading]);
 
   const resetForm = () => {
@@ -68,7 +67,7 @@ export default function Tables() {
   const handleOpenModal = (table: any = null) => {
     if (table) {
       setEditingTable(table);
-      setTableNumber(table.tableNumber);
+      setTableNumber(table.table_number);
       setCapacity(table.capacity.toString());
       setLocation(table.location);
       setStatus(table.status || "available");
@@ -86,46 +85,27 @@ export default function Tables() {
     const cleanLocation = isValidTableLocation(location) ? location : null;
     const cleanStatus = isValidTableStatus(status) ? status : null;
 
-    if (!cleanTableNum) {
-      toast({ title: "Validation Error", description: "Table number/name is required.", variant: "destructive" });
-      return;
-    }
-    if (cleanCapacity === null) {
-      toast({ title: "Validation Error", description: "Capacity must be between 1 and 100.", variant: "destructive" });
-      return;
-    }
-    if (!cleanLocation) {
-      toast({ title: "Validation Error", description: "Invalid location selected.", variant: "destructive" });
-      return;
-    }
-    if (!cleanStatus) {
-      toast({ title: "Validation Error", description: "Invalid status selected.", variant: "destructive" });
-      return;
-    }
+    if (!cleanTableNum) { toast({ title: "Validation Error", description: "Table number/name is required.", variant: "destructive" }); return; }
+    if (cleanCapacity === null) { toast({ title: "Validation Error", description: "Capacity must be between 1 and 100.", variant: "destructive" }); return; }
+    if (!cleanLocation) { toast({ title: "Validation Error", description: "Invalid location selected.", variant: "destructive" }); return; }
+    if (!cleanStatus) { toast({ title: "Validation Error", description: "Invalid status selected.", variant: "destructive" }); return; }
 
     setIsSaving(true);
     try {
-      const baseData = {
-        tableNumber: cleanTableNum,
-        capacity: cleanCapacity,
-        location: cleanLocation,
-        status: cleanStatus,
-        restaurantId,
-        updatedAt: serverTimestamp(),
-      };
-
       if (editingTable) {
-        await updateDoc(doc(db, `tables/${restaurantId}/slots`, editingTable.id), baseData);
+        const { error } = await supabase
+          .from("tables")
+          .update({ table_number: cleanTableNum, capacity: cleanCapacity, location: cleanLocation, status: cleanStatus, updated_at: new Date().toISOString() })
+          .eq("id", editingTable.id);
+        if (error) throw error;
         toast({ title: "Table Updated", description: "Table has been updated successfully." });
       } else {
-        const uid = auth.currentUser?.uid;
-        if (!uid) throw new Error("Not authenticated — cannot write ownerId");
-        await addDoc(collection(db, `tables/${restaurantId}/slots`), {
-          ...baseData,
-          ownerId: uid,
-          isDeleted: false,
-          createdAt: serverTimestamp(),
-        });
+        const uid = user?.id;
+        if (!uid) throw new Error("Not authenticated");
+        const { error } = await supabase
+          .from("tables")
+          .insert({ table_number: cleanTableNum, capacity: cleanCapacity, location: cleanLocation, status: cleanStatus, restaurant_id: restaurantId, owner_id: uid, is_deleted: false });
+        if (error) throw error;
         toast({ title: "Table Added", description: "Table has been added successfully." });
       }
       setIsModalOpen(false);
@@ -141,11 +121,8 @@ export default function Tables() {
     if (isDeleting) return;
     setIsDeleting(id);
     try {
-      // Soft delete — never permanently remove
-      await updateDoc(doc(db, `tables/${restaurantId}/slots`, id), {
-        isDeleted: true,
-        deletedAt: serverTimestamp(),
-      });
+      const { error } = await supabase.from("tables").update({ is_deleted: true, updated_at: new Date().toISOString() }).eq("id", id);
+      if (error) throw error;
       toast({ title: "Table Removed", description: "Table has been removed." });
     } catch (error) {
       toast({ title: "Error", description: safeErrorMessage(error), variant: "destructive" });
@@ -157,10 +134,8 @@ export default function Tables() {
   const handleStatusChange = async (id: string, newStatus: string) => {
     if (!isValidTableStatus(newStatus)) return;
     try {
-      await updateDoc(doc(db, `tables/${restaurantId}/slots`, id), {
-        status: newStatus,
-        updatedAt: serverTimestamp(),
-      });
+      const { error } = await supabase.from("tables").update({ status: newStatus, updated_at: new Date().toISOString() }).eq("id", id);
+      if (error) throw error;
       toast({ title: "Status Updated", description: `Table status changed to ${newStatus}.` });
     } catch (error) {
       toast({ title: "Error", description: safeErrorMessage(error), variant: "destructive" });
@@ -192,12 +167,9 @@ export default function Tables() {
             <span className="flex items-center"><span className="w-3 h-3 rounded-full bg-yellow-500 mr-2"></span>Reserved</span>
           </div>
         </div>
-
         <Dialog open={isModalOpen} onOpenChange={(open) => { setIsModalOpen(open); if (!open) resetForm(); }}>
           <DialogTrigger asChild>
-            <Button onClick={() => handleOpenModal()} className="gap-2">
-              <Plus className="h-4 w-4" /> Add Table
-            </Button>
+            <Button onClick={() => handleOpenModal()} className="gap-2"><Plus className="h-4 w-4" /> Add Table</Button>
           </DialogTrigger>
           <DialogContent className="sm:max-w-[425px]">
             <DialogHeader>
@@ -268,9 +240,7 @@ export default function Tables() {
 
       <div className="grid gap-4 grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6">
         {tables.length === 0 ? (
-          <div className="col-span-full py-12 text-center text-muted-foreground border-2 border-dashed border-border rounded-lg">
-            No tables configured yet.
-          </div>
+          <div className="col-span-full py-12 text-center text-muted-foreground border-2 border-dashed border-border rounded-lg">No tables configured yet.</div>
         ) : (
           tables.map(table => (
             <Card key={table.id} className={cn("relative overflow-hidden cursor-pointer border-2 transition-all hover:-translate-y-1", getStatusColor(table.status))}>
@@ -285,7 +255,7 @@ export default function Tables() {
                 }}
               />
               <CardContent className="p-4 flex flex-col items-center justify-center text-center h-32 relative z-10 pointer-events-none">
-                <span className="text-2xl font-bold mb-1">{table.tableNumber}</span>
+                <span className="text-2xl font-bold mb-1">{table.table_number}</span>
                 <div className="flex items-center text-sm font-medium opacity-80">
                   <Users className="h-4 w-4 mr-1" /> {table.capacity}
                 </div>

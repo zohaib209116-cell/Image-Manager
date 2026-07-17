@@ -1,22 +1,12 @@
 import { useState, useEffect } from "react";
 import { Link } from "wouter";
 import { useAuth } from "@/hooks/useAuth";
-import { db } from "@/lib/firebase";
-import { collection, query, where, onSnapshot, limit } from "firebase/firestore";
+import { supabase } from "@/lib/supabase";
 import { formatPKR, formatKarachiTime } from "@/lib/utils";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import {
-  Users,
-  CalendarClock,
-  TrendingUp,
-  Clock,
-  Plus,
-  ArrowRight,
-  MenuSquare,
-  Grid2X2
-} from "lucide-react";
+import { Users, CalendarClock, TrendingUp, Clock, Plus, ArrowRight, MenuSquare, Grid2X2 } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
 
 export default function Dashboard() {
@@ -28,31 +18,27 @@ export default function Dashboard() {
     if (authLoading) return;
     if (!restaurantId) { setLoading(false); return; }
 
-    console.log("[Dashboard] Setting up bookings listener | restaurantId:", restaurantId);
     setLoading(true);
 
-    const q = query(
-      collection(db, "bookings"),
-      where("restaurantId", "==", restaurantId),
-      where("isDeleted", "==", false),
-      limit(200)
-    );
+    const fetchBookings = async () => {
+      const { data, error } = await supabase
+        .from("bookings")
+        .select("*")
+        .eq("restaurant_id", restaurantId)
+        .eq("is_deleted", false)
+        .limit(200);
+      if (!error) setBookings(data || []);
+      setLoading(false);
+    };
 
-    const unsubscribe = onSnapshot(
-      q,
-      (snapshot) => {
-        console.log("[Dashboard] Bookings received:", snapshot.docs.length);
-        const data = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
-        setBookings(data);
-        setLoading(false);
-      },
-      (error) => {
-        console.error("[Dashboard] listener error:", error.code, error.message);
-        setLoading(false);
-      }
-    );
+    fetchBookings();
 
-    return () => unsubscribe();
+    const channel = supabase
+      .channel(`dashboard-bookings-${restaurantId}`)
+      .on("postgres_changes", { event: "*", schema: "public", table: "bookings", filter: `restaurant_id=eq.${restaurantId}` }, fetchBookings)
+      .subscribe();
+
+    return () => { supabase.removeChannel(channel); };
   }, [restaurantId, authLoading]);
 
   const today = new Date();
@@ -68,15 +54,9 @@ export default function Dashboard() {
     const bDate = new Date(b.date);
     return bDate.getMonth() === today.getMonth() && bDate.getFullYear() === today.getFullYear();
   });
-  const monthlyRevenue = monthlyBookings
-    .filter(b => b.status === "completed")
-    .reduce((acc, curr) => acc + (curr.totalAmount || 0), 0);
+  const monthlyRevenue = monthlyBookings.filter(b => b.status === "completed").reduce((acc, curr) => acc + (curr.total_amount || 0), 0);
   const recentBookings = [...bookings]
-    .sort((a, b) => {
-      const aTime = a.createdAt?.toMillis?.() ?? new Date(a.createdAt).getTime();
-      const bTime = b.createdAt?.toMillis?.() ?? new Date(b.createdAt).getTime();
-      return bTime - aTime;
-    })
+    .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
     .slice(0, 5);
 
   if (authLoading || loading) {
@@ -103,54 +83,40 @@ export default function Dashboard() {
             <CardTitle className="text-sm font-medium text-muted-foreground">Today's Bookings</CardTitle>
             <Users className="h-4 w-4 text-primary" />
           </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold text-foreground">{todaysBookings.length}</div>
-          </CardContent>
+          <CardContent><div className="text-2xl font-bold text-foreground">{todaysBookings.length}</div></CardContent>
         </Card>
         <Card>
           <CardHeader className="flex flex-row items-center justify-between pb-2 space-y-0">
             <CardTitle className="text-sm font-medium text-muted-foreground">Pending Requests</CardTitle>
             <Clock className="h-4 w-4 text-secondary" />
           </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold text-foreground">{pendingBookings.length}</div>
-          </CardContent>
+          <CardContent><div className="text-2xl font-bold text-foreground">{pendingBookings.length}</div></CardContent>
         </Card>
         <Card>
           <CardHeader className="flex flex-row items-center justify-between pb-2 space-y-0">
             <CardTitle className="text-sm font-medium text-muted-foreground">Monthly Bookings</CardTitle>
             <CalendarClock className="h-4 w-4 text-blue-500" />
           </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold text-foreground">{monthlyBookings.length}</div>
-          </CardContent>
+          <CardContent><div className="text-2xl font-bold text-foreground">{monthlyBookings.length}</div></CardContent>
         </Card>
         <Card>
           <CardHeader className="flex flex-row items-center justify-between pb-2 space-y-0">
             <CardTitle className="text-sm font-medium text-muted-foreground">Monthly Revenue</CardTitle>
             <TrendingUp className="h-4 w-4 text-green-500" />
           </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold text-foreground">{formatPKR(monthlyRevenue)}</div>
-          </CardContent>
+          <CardContent><div className="text-2xl font-bold text-foreground">{formatPKR(monthlyRevenue)}</div></CardContent>
         </Card>
       </div>
 
       <div className="flex flex-wrap gap-4">
         <Button asChild className="gap-2">
-          <Link href="/bookings">
-            <Plus className="h-4 w-4" /> New Booking
-          </Link>
+          <Link href="/bookings"><Plus className="h-4 w-4" /> New Booking</Link>
         </Button>
         <Button asChild variant="outline" className="gap-2">
-          <Link href="/menu">
-            <MenuSquare className="h-4 w-4" /> Manage Menu
-          </Link>
+          <Link href="/menu"><MenuSquare className="h-4 w-4" /> Manage Menu</Link>
         </Button>
         <Button asChild variant="outline" className="gap-2">
-          <Link href="/tables">
-            <Grid2X2 className="h-4 w-4" /> Manage Tables
-          </Link>
+          <Link href="/tables"><Grid2X2 className="h-4 w-4" /> Manage Tables</Link>
         </Button>
       </div>
 
@@ -169,17 +135,13 @@ export default function Dashboard() {
               recentBookings.map((booking) => (
                 <div key={booking.id} className="flex items-center justify-between p-4 rounded-lg border border-border bg-card/50">
                   <div>
-                    <p className="font-medium text-foreground">{booking.customerName}</p>
-                    <p className="text-sm text-muted-foreground">{formatKarachiTime(booking.date)} · {booking.partySize} people</p>
+                    <p className="font-medium text-foreground">{booking.customer_name}</p>
+                    <p className="text-sm text-muted-foreground">{formatKarachiTime(booking.date)} · {booking.party_size} people</p>
                   </div>
-                  <Badge variant={
-                    booking.status === "confirmed" ? "default" :
-                    booking.status === "pending" ? "secondary" :
-                    booking.status === "cancelled" ? "destructive" : "outline"
-                  } className={
-                    booking.status === "confirmed" ? "bg-green-500 hover:bg-green-600" :
-                    booking.status === "completed" ? "bg-blue-500 hover:bg-blue-600" : ""
-                  }>
+                  <Badge
+                    variant={booking.status === "confirmed" ? "default" : booking.status === "pending" ? "secondary" : booking.status === "cancelled" ? "destructive" : "outline"}
+                    className={booking.status === "confirmed" ? "bg-green-500 hover:bg-green-600" : booking.status === "completed" ? "bg-blue-500 hover:bg-blue-600" : ""}
+                  >
                     {booking.status?.charAt(0).toUpperCase() + booking.status?.slice(1)}
                   </Badge>
                 </div>

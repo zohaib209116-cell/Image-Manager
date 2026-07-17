@@ -16,8 +16,7 @@ import {
   X,
   ChevronDown,
 } from "lucide-react";
-import { collection, query, where, onSnapshot, orderBy, limit } from "firebase/firestore";
-import { db } from "@/lib/firebase";
+import { supabase } from "@/lib/supabase";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import {
@@ -42,7 +41,7 @@ const NAV_ITEMS = [
   { href: "/settings", label: "Settings", icon: Settings },
 ];
 
-const INACTIVITY_TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes
+const INACTIVITY_TIMEOUT_MS = 30 * 60 * 1000;
 
 export function Layout({ children }: { children: React.ReactNode }) {
   const [location] = useLocation();
@@ -76,27 +75,29 @@ export function Layout({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     if (!restaurantId) return;
 
-    const q = query(
-      collection(db, "notifications"),
-      where("restaurantId", "==", restaurantId),
-      where("read", "==", false),
-      orderBy("createdAt", "desc"),
-      limit(50)
-    );
+    const fetchUnreadCount = async () => {
+      const { count } = await supabase
+        .from("notifications")
+        .select("*", { count: "exact", head: true })
+        .eq("restaurant_id", restaurantId)
+        .eq("read", false);
+      setUnreadCount(count ?? 0);
+    };
 
-    const unsubscribe = onSnapshot(
-      q,
-      (snap) => { setUnreadCount(snap.docs.length); },
-      (err) => { console.error("[Notifications] Listener error:", err.code); }
-    );
+    fetchUnreadCount();
 
-    return () => unsubscribe();
+    const channel = supabase
+      .channel(`layout-notif-${restaurantId}`)
+      .on("postgres_changes", { event: "*", schema: "public", table: "notifications", filter: `restaurant_id=eq.${restaurantId}` }, fetchUnreadCount)
+      .subscribe();
+
+    return () => { supabase.removeChannel(channel); };
   }, [restaurantId]);
 
   // ── Live booking alert — sound + toast ──────────────────────────────────────
   const handleNewBooking = useCallback((booking: any) => {
-    const name = booking.customerName || booking.name || "A customer";
-    const people = booking.partySize || booking.numberOfPeople || "";
+    const name = booking.customer_name || "A customer";
+    const people = booking.party_size || "";
     toast({
       title: "New Booking Request",
       description: people ? `${name} — party of ${people}` : name,
@@ -127,9 +128,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
       {/* Mobile Header */}
       <div className="flex h-16 items-center justify-between border-b border-border bg-card px-4 md:hidden">
         <div className="flex items-center gap-2">
-          <div className="h-8 w-8 rounded bg-primary flex items-center justify-center font-bold text-primary-foreground">
-            D
-          </div>
+          <div className="h-8 w-8 rounded bg-primary flex items-center justify-center font-bold text-primary-foreground">D</div>
           <span className="font-bold text-foreground">Dastarkhuwa</span>
         </div>
         <Button variant="ghost" size="icon" onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}>
@@ -138,16 +137,12 @@ export function Layout({ children }: { children: React.ReactNode }) {
       </div>
 
       {/* Sidebar */}
-      <aside
-        className={cn(
-          "fixed inset-y-0 left-0 z-50 flex w-64 flex-col border-r border-border bg-sidebar transition-transform duration-200 ease-in-out md:relative md:translate-x-0",
-          isMobileMenuOpen ? "translate-x-0" : "-translate-x-full"
-        )}
-      >
+      <aside className={cn(
+        "fixed inset-y-0 left-0 z-50 flex w-64 flex-col border-r border-border bg-sidebar transition-transform duration-200 ease-in-out md:relative md:translate-x-0",
+        isMobileMenuOpen ? "translate-x-0" : "-translate-x-full"
+      )}>
         <div className="flex h-16 shrink-0 items-center gap-3 border-b border-sidebar-border px-6">
-          <div className="h-8 w-8 rounded bg-primary flex items-center justify-center font-bold text-primary-foreground">
-            D
-          </div>
+          <div className="h-8 w-8 rounded bg-primary flex items-center justify-center font-bold text-primary-foreground">D</div>
           <span className="text-lg font-bold text-sidebar-foreground">Dastarkhuwa</span>
         </div>
 
@@ -193,14 +188,10 @@ export function Layout({ children }: { children: React.ReactNode }) {
         </nav>
 
         <div className="border-t border-sidebar-border p-4 space-y-2">
-          {/* Restaurant switcher — only shown when user owns multiple */}
           {hasMultiple && (
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
-                <Button
-                  variant="ghost"
-                  className="w-full justify-between gap-2 text-sidebar-foreground/70 hover:bg-sidebar-accent/50 hover:text-sidebar-foreground text-sm"
-                >
+                <Button variant="ghost" className="w-full justify-between gap-2 text-sidebar-foreground/70 hover:bg-sidebar-accent/50 hover:text-sidebar-foreground text-sm">
                   <span className="flex items-center gap-2 truncate">
                     <Store className="h-4 w-4 shrink-0" />
                     <span className="truncate">{restaurantData?.name || "Switch Restaurant"}</span>
@@ -213,29 +204,20 @@ export function Layout({ children }: { children: React.ReactNode }) {
                   <DropdownMenuItem
                     key={r.queryId}
                     onClick={() => setActiveRestaurant(r.queryId)}
-                    className={cn(
-                      "cursor-pointer",
-                      r.queryId === restaurantId && "font-semibold text-primary"
-                    )}
+                    className={cn("cursor-pointer", r.queryId === restaurantId && "font-semibold text-primary")}
                   >
                     {r.data.name || r.queryId}
-                    {r.queryId === restaurantId && (
-                      <span className="ml-auto text-xs text-primary">Active</span>
-                    )}
+                    {r.queryId === restaurantId && <span className="ml-auto text-xs text-primary">Active</span>}
                   </DropdownMenuItem>
                 ))}
                 <DropdownMenuSeparator />
-                <DropdownMenuItem
-                  className="text-muted-foreground"
-                  onClick={handleLogout}
-                >
+                <DropdownMenuItem className="text-muted-foreground" onClick={handleLogout}>
                   <LogOut className="h-4 w-4 mr-2" /> Sign out
                 </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
           )}
 
-          {/* Single-restaurant sign-out button */}
           {!hasMultiple && (
             <Button
               variant="ghost"
@@ -243,8 +225,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
               onClick={handleLogout}
               data-testid="button-logout"
             >
-              <LogOut className="h-5 w-5" />
-              Sign out
+              <LogOut className="h-5 w-5" /> Sign out
             </Button>
           )}
         </div>
@@ -255,23 +236,16 @@ export function Layout({ children }: { children: React.ReactNode }) {
         <header className="hidden h-16 shrink-0 items-center justify-between border-b border-border bg-card px-8 md:flex">
           <h1 className="text-xl font-semibold text-foreground">{getPageTitle()}</h1>
           <div className="flex items-center gap-4">
-            <span className="text-sm font-medium text-muted-foreground">
-              {restaurantData?.name || "Loading..."}
-            </span>
+            <span className="text-sm font-medium text-muted-foreground">{restaurantData?.name || "Loading..."}</span>
           </div>
         </header>
-
-        <div className="flex-1 overflow-y-auto p-4 md:p8">
+        <div className="flex-1 overflow-y-auto p-4 md:p-8">
           <div className="mx-auto max-w-6xl">{children}</div>
         </div>
       </main>
 
-      {/* Mobile Overlay */}
       {isMobileMenuOpen && (
-        <div
-          className="fixed inset-0 z-40 bg-black/80 md:hidden"
-          onClick={closeMobileMenu}
-        />
+        <div className="fixed inset-0 z-40 bg-black/80 md:hidden" onClick={closeMobileMenu} />
       )}
     </div>
   );

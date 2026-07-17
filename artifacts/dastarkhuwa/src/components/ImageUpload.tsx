@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { cn } from "@/lib/utils";
 import { useToast } from "@/hooks/use-toast";
-import { useAuth } from "@/hooks/useAuth";
+import { supabase } from "@/lib/supabase";
 
 interface ImageUploadProps {
   onUpload: (imageUrl: string) => void;
@@ -20,18 +20,12 @@ export function ImageUpload({ onUpload, uploadFn, currentImageUrl, label }: Imag
   const [uploading, setUploading] = useState(false);
   const [progress, setProgress] = useState(0);
   const { toast } = useToast();
-  const { user } = useAuth();
 
   const onDrop = useCallback((acceptedFiles: File[], rejectedFiles: any[]) => {
     if (rejectedFiles.length > 0) {
-      toast({
-        title: "Invalid file",
-        description: "Please select a valid JPG, PNG, or WEBP under 5MB.",
-        variant: "destructive",
-      });
+      toast({ title: "Invalid file", description: "Please select a valid JPG, PNG, or WEBP under 5MB.", variant: "destructive" });
       return;
     }
-
     if (acceptedFiles.length > 0) {
       const selectedFile = acceptedFiles[0];
       setFile(selectedFile);
@@ -41,38 +35,28 @@ export function ImageUpload({ onUpload, uploadFn, currentImageUrl, label }: Imag
 
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
     onDrop,
-    accept: {
-      "image/jpeg": [".jpeg", ".jpg"],
-      "image/png": [".png"],
-      "image/webp": [".webp"],
-    },
-    maxSize: 5 * 1024 * 1024, // 5MB
+    accept: { "image/jpeg": [".jpeg", ".jpg"], "image/png": [".png"], "image/webp": [".webp"] },
+    maxSize: 5 * 1024 * 1024,
     multiple: false,
   });
 
   const handleUpload = async () => {
-    if (!file || !user) return;
+    if (!file) return;
     setUploading(true);
     setProgress(20);
     try {
-      const token = await user.getIdToken();
+      const { data: { session } } = await supabase.auth.getSession();
+      const token = session?.access_token ?? "";
       setProgress(60);
       const res = await uploadFn(file, token);
       setProgress(100);
       onUpload(res.imageUrl);
       setPreview(res.imageUrl);
       setFile(null);
-      toast({
-        title: "Upload Successful",
-        description: "Image uploaded successfully.",
-      });
+      toast({ title: "Upload Successful", description: "Image uploaded successfully." });
     } catch (error) {
       console.error(error);
-      toast({
-        title: "Upload Failed",
-        description: "Failed to upload image.",
-        variant: "destructive",
-      });
+      toast({ title: "Upload Failed", description: "Failed to upload image.", variant: "destructive" });
       setProgress(0);
     } finally {
       setUploading(false);
@@ -89,7 +73,7 @@ export function ImageUpload({ onUpload, uploadFn, currentImageUrl, label }: Imag
   return (
     <div className="space-y-2">
       {label && <label className="text-sm font-medium">{label}</label>}
-      
+
       {!preview ? (
         <div
           {...getRootProps()}
@@ -100,9 +84,7 @@ export function ImageUpload({ onUpload, uploadFn, currentImageUrl, label }: Imag
         >
           <input {...getInputProps()} />
           <UploadCloud className="mb-2 h-8 w-8 text-muted-foreground" />
-          <p className="text-sm font-medium text-foreground">
-            {isDragActive ? "Drop image here" : "Drag & drop or click to upload"}
-          </p>
+          <p className="text-sm font-medium text-foreground">{isDragActive ? "Drop image here" : "Drag & drop or click to upload"}</p>
           <p className="mt-1 text-xs text-muted-foreground">PNG, JPG or WEBP (max 5MB)</p>
         </div>
       ) : (

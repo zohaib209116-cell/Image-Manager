@@ -1,7 +1,6 @@
 import { useState, useEffect } from "react";
 import { useAuth } from "@/hooks/useAuth";
-import { db } from "@/lib/firebase";
-import { doc, getDoc, updateDoc, serverTimestamp } from "firebase/firestore";
+import { supabase } from "@/lib/supabase";
 import { sanitizeStr, safeErrorMessage } from "@/lib/security";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -27,12 +26,12 @@ export default function Profile() {
     name: "",
     city: "",
     area: "",
-    cuisineType: "",
-    priceRange: "mid",
+    cuisine_type: "",
+    price_range: "mid",
     description: "",
     phone: "",
-    coverImage: "",
-    galleryImages: [] as string[]
+    cover_image: "",
+    gallery_images: [] as string[],
   });
 
   const [hours, setHours] = useState({
@@ -49,13 +48,12 @@ export default function Profile() {
     const fetchProfile = async () => {
       if (!restaurantId) return;
       try {
-        const docSnap = await getDoc(doc(db, "restaurants", restaurantId));
-        if (docSnap.exists()) {
-          const data = docSnap.data();
+        const { data, error } = await supabase.from("restaurants").select("*").eq("id", restaurantId).single();
+        if (!error && data) {
           setFormData(prev => ({ ...prev, ...data }));
           if (data.hours) setHours(data.hours);
         }
-      } catch (error) {
+      } catch {
         // Silent — profile simply stays blank on load failure
       } finally {
         setLoading(false);
@@ -67,29 +65,32 @@ export default function Profile() {
   const handleSave = async () => {
     if (!restaurantId || saving) return;
 
-    // Sanitize all string fields before write
     const cleanName = sanitizeStr(formData.name, 120);
     if (!cleanName) {
       toast({ title: "Validation Error", description: "Restaurant name is required.", variant: "destructive" });
       return;
     }
-    const priceRange = VALID_PRICE_RANGES.includes(formData.priceRange as any) ? formData.priceRange : "mid";
+    const price_range = VALID_PRICE_RANGES.includes(formData.price_range as any) ? formData.price_range : "mid";
 
     setSaving(true);
     try {
-      await updateDoc(doc(db, "restaurants", restaurantId), {
-        name: cleanName,
-        city: sanitizeStr(formData.city, 100),
-        area: sanitizeStr(formData.area, 100),
-        cuisineType: sanitizeStr(formData.cuisineType, 80),
-        priceRange,
-        description: sanitizeStr(formData.description, 1000),
-        phone: sanitizeStr(formData.phone, 20),
-        coverImage: sanitizeStr(formData.coverImage, 2000),
-        galleryImages: Array.isArray(formData.galleryImages) ? formData.galleryImages.slice(0, 20) : [],
-        hours,
-        updatedAt: serverTimestamp(),
-      });
+      const { error } = await supabase
+        .from("restaurants")
+        .update({
+          name: cleanName,
+          city: sanitizeStr(formData.city, 100),
+          area: sanitizeStr(formData.area, 100),
+          cuisine_type: sanitizeStr(formData.cuisine_type, 80),
+          price_range,
+          description: sanitizeStr(formData.description, 1000),
+          phone: sanitizeStr(formData.phone, 20),
+          cover_image: sanitizeStr(formData.cover_image, 2000),
+          gallery_images: Array.isArray(formData.gallery_images) ? formData.gallery_images.slice(0, 20) : [],
+          hours,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", restaurantId);
+      if (error) throw error;
       toast({ title: "Profile Updated", description: "Your restaurant profile has been saved." });
     } catch (error) {
       toast({ title: "Error", description: safeErrorMessage(error), variant: "destructive" });
@@ -99,10 +100,7 @@ export default function Profile() {
   };
 
   const handleHoursChange = (day: string, field: string, value: string | boolean) => {
-    setHours(prev => ({
-      ...prev,
-      [day]: { ...prev[day as keyof typeof prev], [field]: value }
-    }));
+    setHours(prev => ({ ...prev, [day]: { ...prev[day as keyof typeof prev], [field]: value } }));
   };
 
   if (loading) {
@@ -134,12 +132,11 @@ export default function Profile() {
           <div className="space-y-2">
             <Label>Cover Image</Label>
             <ImageUpload
-              onUpload={(url) => setFormData(prev => ({ ...prev, coverImage: url }))}
+              onUpload={(url) => setFormData(prev => ({ ...prev, cover_image: url }))}
               uploadFn={uploadRestaurantImage}
-              currentImageUrl={formData.coverImage}
+              currentImageUrl={formData.cover_image}
             />
           </div>
-
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             <div className="space-y-2">
               <Label htmlFor="name">Restaurant Name</Label>
@@ -159,11 +156,11 @@ export default function Profile() {
             </div>
             <div className="space-y-2">
               <Label htmlFor="cuisineType">Cuisine Type</Label>
-              <Input id="cuisineType" placeholder="e.g. Desi, Chinese, Continental" value={formData.cuisineType} maxLength={80} onChange={(e) => setFormData(prev => ({ ...prev, cuisineType: e.target.value }))} />
+              <Input id="cuisineType" placeholder="e.g. Desi, Chinese, Continental" value={formData.cuisine_type} maxLength={80} onChange={(e) => setFormData(prev => ({ ...prev, cuisine_type: e.target.value }))} />
             </div>
             <div className="space-y-2">
               <Label>Price Range</Label>
-              <Select value={formData.priceRange} onValueChange={(val) => setFormData(prev => ({ ...prev, priceRange: val }))}>
+              <Select value={formData.price_range} onValueChange={(val) => setFormData(prev => ({ ...prev, price_range: val }))}>
                 <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="budget">Budget (Rs)</SelectItem>
@@ -173,7 +170,6 @@ export default function Profile() {
               </Select>
             </div>
           </div>
-
           <div className="space-y-2">
             <Label htmlFor="description">Description</Label>
             <Textarea
@@ -211,11 +207,7 @@ export default function Profile() {
                       <span className="text-muted-foreground italic px-4">Closed all day</span>
                     )}
                   </div>
-                  <Button
-                    variant={dayData.closed ? "default" : "outline"}
-                    size="sm"
-                    onClick={() => handleHoursChange(day, "closed", !dayData.closed)}
-                  >
+                  <Button variant={dayData.closed ? "default" : "outline"} size="sm" onClick={() => handleHoursChange(day, "closed", !dayData.closed)}>
                     {dayData.closed ? "Open" : "Mark Closed"}
                   </Button>
                 </div>
