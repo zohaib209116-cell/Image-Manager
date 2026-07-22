@@ -1,0 +1,137 @@
+You are working on my Dastarkhuwa project.
+
+Context:
+- Backend: Node.js + Express
+- Database: PostgreSQL (Supabase)
+- Authentication: Supabase Auth
+- Current frontend: Replit Restaurant Dashboard
+- Backend server runs separately on localhost:3000
+- Database already has a users table:
+
+users:
+- id (uuid)
+- supabase_uid
+- name
+- email
+- phone
+- role
+- created_at
+
+Current roles:
+- customer
+- restaurant_owner
+- admin
+
+Goal:
+Implement Supabase authentication integration correctly.
+
+IMPORTANT RULES:
+1. Do NOT hallucinate files, APIs, tables, columns, or existing code.
+2. First inspect the existing Replit project structure.
+3. Tell me what authentication code already exists before changing anything.
+4. Match the current coding style and architecture.
+5. Do not rewrite working code unnecessarily.
+6. If something is missing, clearly tell me before creating it.
+
+Tasks:
+
+STEP 1 — Analyze current authentication
+- Find Supabase client configuration.
+- Find login/signup logic.
+- Find where sessions are stored.
+- Find current user state management.
+- Report your findings.
+
+STEP 2 — Connect Supabase Auth
+Implement:
+- Email/password login using Supabase Auth.
+- Session persistence.
+- Logout functionality.
+- Loading user session on app startup.
+
+After login:
+- Store the Supabase access token.
+- Store user profile data from PostgreSQL users table.
+
+The backend expects:
+Authorization: Bearer <access_token>
+
+STEP 3 — Backend integration testing
+Create a test flow:
+
+Frontend login
+↓
+Get Supabase access_token
+↓
+Send token to backend
+↓
+Backend verifies token
+↓
+Backend finds matching user using supabase_uid
+↓
+Return user profile
+
+Test endpoint:
+
+GET:
+http://localhost:3000/api/profile
+
+Expected response:
+
+{
+ message:"Authentication successful",
+ user:{
+   id,
+   name,
+   email,
+   role
+ }
+}
+
+STEP 4 — Restaurant dashboard protection
+
+After authentication works:
+
+Protect restaurant dashboard routes.
+
+Rules:
+
+restaurant_owner:
+- Can access restaurant dashboard.
+
+customer:
+- Cannot access restaurant dashboard.
+
+admin:
+- Can access everything.
+
+Do not only check frontend permissions.
+Backend authorization must also exist.
+
+STEP 5 — Security requirements
+
+Implement safely:
+- Never expose Supabase secret key in frontend.
+- Never trust role information from frontend.
+- Verify user identity from backend database.
+- Handle expired tokens.
+- Handle missing tokens.
+- Handle invalid tokens.
+
+STEP 6 — Final report
+
+After completing work, provide:
+
+1. Files changed.
+2. Code changes made.
+3. APIs added/changed.
+4. Authentication flow explanation.
+5. Security improvements.
+6. Problems encountered.
+7. Things still remaining.
+8. Testing commands used.
+9. Any assumptions made.
+
+Before modifying anything:
+FIRST SHOW ME YOUR ANALYSIS.
+Wait for approval before major changes.
